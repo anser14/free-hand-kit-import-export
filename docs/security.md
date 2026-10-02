@@ -16,7 +16,9 @@ The package cannot make an application's selected Django storage private by itse
 
 CSV output intended for spreadsheets requires formula-injection handling. A value
 that begins with formula-trigger characters must not be exported naively as a cell.
-Raw machine-to-machine CSV and spreadsheet-safe CSV are separate output policies.
+The current CSV endpoint prefixes values beginning with `=`, `+`, `-`, or `@` (including
+after whitespace) with an apostrophe. The endpoint is therefore spreadsheet-safe by
+default; a future raw machine-to-machine policy must remain opt-in and explicit.
 
 Treat uploaded datasets as sensitive. Do not log their contents or expose another
 user's import job, error report, or original file.

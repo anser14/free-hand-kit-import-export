@@ -7,6 +7,9 @@ FREEHAND_KIT_IMPORT_EXPORT = {
     "MAX_UPLOAD_BYTES": 5 * 1024 * 1024,
     "MAX_ROWS": 10_000,
     "MAX_ERROR_ROWS": 100,
+    "PAGE_SIZE": 100,
+    "MAX_PAGE_SIZE": 500,
+    "MAX_EXPORT_ROWS": 10_000,
     "RESOURCES": {
         "products": {
             "MODEL": "inventory.Product",
@@ -35,6 +38,13 @@ The optional operational limits above are positive integers. The defaults are 5 
 10,000 data rows, and 100 stored error entries. CSV headers must exactly match the
 configured `IMPORT_FIELDS` set; this prevents callers from smuggling extra model fields
 into the import engine. Relation names must be declared in import or export fields.
+
+`records/` supports `search`, `ordering`, `page`, `page_size`, and exact
+`filter.<field>` parameters only when their fields are explicitly present in
+`SEARCH_FIELDS`, `ORDERING_FIELDS`, or `FILTER_FIELDS`. `export/` uses the same search,
+ordering, and filter controls but intentionally ignores pagination and is capped by
+`MAX_EXPORT_ROWS`. Relationship fields must use `RELATIONS` with a stable lookup field;
+many-to-many ordering is intentionally rejected.
 
 Run this after configuration changes:
 

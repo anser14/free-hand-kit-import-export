@@ -6,10 +6,11 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.2.0` implements a bounded, synchronous,
-> two-phase CSV import workflow. It is not published and is not yet a stable production
-> release: exports, queryset scoping, configurable per-resource permissions, background
-> jobs, and retention operations remain to be implemented.
+> **Status: pre-release.** Version `0.3.0` implements bounded, synchronous,
+> two-phase CSV import plus configured records and spreadsheet-safe CSV export. It is
+> not published and is not yet a stable production release: queryset/tenant scoping,
+> configurable per-resource permissions, background jobs, and retention operations
+> remain to be implemented.
 
 ## Design promise
 
@@ -56,6 +57,11 @@ form data with a `file` field, review the returned job, and explicitly call
 `POST /api/data/import-jobs/{id}/confirm/`. A preview is dry-run only; confirmation
 revalidates the stored source and applies it atomically.
 
+Staff users can also use `GET /api/data/resources/products/records/` for paginated JSON
+and `GET /api/data/resources/products/export/` for bounded CSV. Both accept only
+developer-configured `search`, `ordering`, and `filter.<field>` controls. CSV export
+cells that could be interpreted as spreadsheet formulae are prefixed safely.
+
 ## Safety boundary
 
 - Only explicitly registered resources are discoverable.
@@ -66,8 +72,8 @@ revalidates the stored source and applies it atomically.
 - Uploads are UTF-8 CSV only, with exact configured headers, size/row limits, and no
   blank rows. Persisted errors contain line numbers and codes—not uploaded cell values.
 - Preview and confirmation use transactions; confirmation is retry-safe after success.
-- Spreadsheet-formula-safe export, queryset scoping, and configurable authorization are
-  still mandatory before the first stable release.
+- CSV exports are capped and spreadsheet-formula-safe. Queryset scoping and configurable
+  authorization are still mandatory before the first stable release.
 
 ## Documentation
 

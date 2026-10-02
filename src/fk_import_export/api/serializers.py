@@ -55,3 +55,13 @@ class ImportJobSerializer(serializers.ModelSerializer[ImportJob]):
 
     def get_confirmation_eligible(self, job: ImportJob) -> bool:
         return job.status == ImportJob.Status.PREVIEWED
+
+
+class RecordPageSerializer(serializers.Serializer[dict[str, object]]):
+    """OpenAPI contract for a page of dynamically configured export records."""
+
+    count = serializers.IntegerField(min_value=0)
+    page = serializers.IntegerField(min_value=1)
+    page_size = serializers.IntegerField(min_value=1)
+    total_pages = serializers.IntegerField(min_value=0)
+    results = serializers.ListField(child=serializers.DictField())

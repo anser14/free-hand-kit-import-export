@@ -74,3 +74,39 @@ def test_non_positive_operational_limit_is_reported_by_system_check() -> None:
         issues = configuration_issues()
 
     assert issues[0].id == "fk_import_export.E001"
+
+
+def test_relation_fields_require_an_explicit_lookup_configuration() -> None:
+    with override_settings(
+        FREEHAND_KIT_IMPORT_EXPORT={
+            "RESOURCES": {
+                "products": {
+                    "MODEL": "fk_import_export_test_app.Product",
+                    "IMPORT_FIELDS": ("sku", "name", "price", "category"),
+                    "EXPORT_FIELDS": ("sku", "name", "price", "category"),
+                    "IMPORT_ID_FIELDS": ("sku",),
+                }
+            }
+        }
+    ):
+        issues = configuration_issues()
+
+    assert any(issue.id == "fk_import_export.E018" for issue in issues)
+
+
+def test_many_to_many_fields_cannot_be_ordered() -> None:
+    with override_settings(
+        FREEHAND_KIT_IMPORT_EXPORT={
+            "RESOURCES": {
+                "products": {
+                    "MODEL": "fk_import_export_test_app.Product",
+                    "EXPORT_FIELDS": ("sku", "tags"),
+                    "ORDERING_FIELDS": ("tags",),
+                    "RELATIONS": {"tags": {"LOOKUP_FIELD": "slug"}},
+                }
+            }
+        }
+    ):
+        issues = configuration_issues()
+
+    assert any(issue.id == "fk_import_export.E019" for issue in issues)

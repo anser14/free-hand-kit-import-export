@@ -7,7 +7,9 @@ from .api.views import (
     ImportConfirmView,
     ImportJobDetailView,
     ImportPreviewView,
+    ResourceExportView,
     ResourceListView,
+    ResourceRecordsView,
     ResourceSchemaView,
     ResourceTemplateView,
 )
@@ -26,6 +28,16 @@ urlpatterns = [
         "resources/<str:resource_key>/imports/preview/",
         ImportPreviewView.as_view(),
         name="import-preview",
+    ),
+    path(
+        "resources/<str:resource_key>/records/",
+        ResourceRecordsView.as_view(),
+        name="resource-records",
+    ),
+    path(
+        "resources/<str:resource_key>/export/",
+        ResourceExportView.as_view(),
+        name="resource-export",
     ),
     path("import-jobs/<uuid:job_id>/", ImportJobDetailView.as_view(), name="import-job-detail"),
     path(

@@ -34,6 +34,18 @@ def resource_class(config: ResourceConfig) -> type[resources.ModelResource[Model
     )
     attributes: dict[str, object] = {"Meta": meta}
 
+    for field_name in selected_fields:
+        model_field = model._meta.get_field(field_name)
+        if (
+            isinstance(model_field, Field)
+            and model_field.is_relation
+            and field_name not in config.relations
+        ):
+            raise ResourceConfigurationError(
+                f"Resource '{config.key}' relation '{field_name}' requires explicit "
+                "RELATIONS lookup configuration."
+            )
+
     for relation_name, relation in config.relations.items():
         relation_field = model._meta.get_field(relation_name)
         if not isinstance(relation_field, Field) or not relation_field.is_relation:

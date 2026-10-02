@@ -3,6 +3,15 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-02
+
+### Added
+
+- Paginated configured-record APIs and bounded CSV export APIs.
+- Allowlisted search, ordering, exact filtering, relationship lookup filtering, and
+  spreadsheet-formula-safe CSV cell serialization.
+- Explicit relation requirements and validation that disallows many-to-many ordering.
+
 ## [0.2.0] - 2026-10-02
 
 ### Added

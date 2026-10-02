@@ -7,7 +7,7 @@ from uuid import UUID
 
 from django.contrib.auth.models import AbstractBaseUser
 from django.http import Http404, HttpResponse
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
 from rest_framework import permissions, status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -19,6 +19,12 @@ from fk_import_export.conf import (
     get_resource,
     get_resources,
     get_runtime_settings,
+)
+from fk_import_export.querying import (
+    ExportLimitError,
+    ResourceQueryError,
+    csv_export,
+    record_page,
 )
 from fk_import_export.services import (
     ImportJobNotFound,
@@ -32,9 +38,33 @@ from fk_import_export.services import (
 from .serializers import (
     ImportJobSerializer,
     ImportPreviewSerializer,
+    RecordPageSerializer,
     ResourceSchemaSerializer,
     ResourceSerializer,
 )
+
+RESOURCE_QUERY_PARAMETERS = [
+    OpenApiParameter(
+        name="search",
+        type=OpenApiTypes.STR,
+        location=OpenApiParameter.QUERY,
+        description="Search across the resource's configured SEARCH_FIELDS.",
+    ),
+    OpenApiParameter(
+        name="ordering",
+        type=OpenApiTypes.STR,
+        location=OpenApiParameter.QUERY,
+        description=(
+            "Comma-separated configured ORDERING_FIELDS; prefix a field with - for descending."
+        ),
+    ),
+    OpenApiParameter(
+        name="filter.<field>",
+        type=OpenApiTypes.STR,
+        location=OpenApiParameter.QUERY,
+        description="Exact-match filter for a configured FILTER_FIELDS entry.",
+    ),
+]
 
 
 def _resource_payload(resource: ResourceConfig) -> dict[str, object]:
@@ -97,7 +127,7 @@ class ResourceSchemaView(ResourceAccessAPIView):
             name: {"lookup_field": relation.lookup_field, "separator": relation.separator}
             for name, relation in resource.relations.items()
         }
-        payload["operations"] = ["template", "preview_import"]
+        payload["operations"] = ["template", "preview_import", "records", "export"]
         return Response(payload)
 
 
@@ -119,6 +149,78 @@ class ResourceTemplateView(ResourceAccessAPIView):
         )
         writer = csv.writer(response, lineterminator="\n")
         writer.writerow(resource.import_fields)
+        return response
+
+
+@extend_schema(
+    tags=["Freehand Kit Import Export"],
+    parameters=[
+        *RESOURCE_QUERY_PARAMETERS,
+        OpenApiParameter(
+            name="page",
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.QUERY,
+            description="One-based page number.",
+        ),
+        OpenApiParameter(
+            name="page_size",
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.QUERY,
+            description="Records per page, bounded by MAX_PAGE_SIZE.",
+        ),
+    ],
+    responses={
+        200: RecordPageSerializer,
+        400: OpenApiResponse(description="Invalid or disallowed query parameter."),
+        404: OpenApiResponse(description="Unknown or unavailable resource."),
+    },
+)
+class ResourceRecordsView(ResourceAccessAPIView):
+    """Return a page of safe record representations for an approved resource."""
+
+    def get(self, request, resource_key: str):  # type: ignore[no-untyped-def]
+        try:
+            result = record_page(
+                self.get_resource(resource_key),
+                request.query_params,
+                get_runtime_settings(),
+            )
+        except ResourceQueryError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "count": result.count,
+                "page": result.page,
+                "page_size": result.page_size,
+                "total_pages": result.total_pages,
+                "results": result.results,
+            }
+        )
+
+
+@extend_schema(
+    tags=["Freehand Kit Import Export"],
+    parameters=RESOURCE_QUERY_PARAMETERS,
+    responses={
+        200: OpenApiResponse(description="Spreadsheet-safe CSV export."),
+        400: OpenApiResponse(description="Invalid query parameter or export limit exceeded."),
+        404: OpenApiResponse(description="Unknown or unavailable resource."),
+    },
+)
+class ResourceExportView(ResourceAccessAPIView):
+    """Return a bounded CSV export using the same safe query controls as records."""
+
+    def get(self, request, resource_key: str):  # type: ignore[no-untyped-def]
+        resource = self.get_resource(resource_key)
+        try:
+            export = csv_export(resource, request.query_params, get_runtime_settings())
+        except (ExportLimitError, ResourceQueryError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{resource.key}-export.csv"'
+        writer = csv.writer(response, lineterminator="\n")
+        writer.writerow(export.headers)
+        writer.writerows(export.rows)
         return response
 
 

@@ -17,6 +17,9 @@ RESOURCE_KEY_MAX_LENGTH = 80
 DEFAULT_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 DEFAULT_MAX_ROWS = 10_000
 DEFAULT_MAX_ERROR_ROWS = 100
+DEFAULT_PAGE_SIZE = 100
+DEFAULT_MAX_PAGE_SIZE = 500
+DEFAULT_MAX_EXPORT_ROWS = 10_000
 SENSITIVE_FIELD_NAMES = frozenset(
     {
         "password",
@@ -50,6 +53,9 @@ ALLOWED_SETTING_KEYS = frozenset(
         "MAX_UPLOAD_BYTES",
         "MAX_ROWS",
         "MAX_ERROR_ROWS",
+        "PAGE_SIZE",
+        "MAX_PAGE_SIZE",
+        "MAX_EXPORT_ROWS",
     }
 )
 
@@ -68,11 +74,14 @@ class RelationConfig:
 
 @dataclass(frozen=True)
 class ImportExportSettings:
-    """Validated operational limits for synchronous CSV import previews."""
+    """Validated operational limits for synchronous API workflows."""
 
     max_upload_bytes: int
     max_rows: int
     max_error_rows: int
+    page_size: int
+    max_page_size: int
+    max_export_rows: int
 
 
 @dataclass(frozen=True)
@@ -243,6 +252,18 @@ def get_runtime_settings() -> ImportExportSettings:
     """Return validated operational limits for this package instance."""
 
     raw_settings = _settings_mapping()
+    page_size = _positive_int(
+        raw_settings.get("PAGE_SIZE"), setting_key="PAGE_SIZE", default=DEFAULT_PAGE_SIZE
+    )
+    max_page_size = _positive_int(
+        raw_settings.get("MAX_PAGE_SIZE"),
+        setting_key="MAX_PAGE_SIZE",
+        default=DEFAULT_MAX_PAGE_SIZE,
+    )
+    if page_size > max_page_size:
+        raise ResourceConfigurationError(
+            f"{SETTING_NAME}['PAGE_SIZE'] must not exceed MAX_PAGE_SIZE."
+        )
     return ImportExportSettings(
         max_upload_bytes=_positive_int(
             raw_settings.get("MAX_UPLOAD_BYTES"),
@@ -256,6 +277,13 @@ def get_runtime_settings() -> ImportExportSettings:
             raw_settings.get("MAX_ERROR_ROWS"),
             setting_key="MAX_ERROR_ROWS",
             default=DEFAULT_MAX_ERROR_ROWS,
+        ),
+        page_size=page_size,
+        max_page_size=max_page_size,
+        max_export_rows=_positive_int(
+            raw_settings.get("MAX_EXPORT_ROWS"),
+            setting_key="MAX_EXPORT_ROWS",
+            default=DEFAULT_MAX_EXPORT_ROWS,
         ),
     )
 
@@ -365,6 +393,29 @@ def _validate_model_fields(resource: ResourceConfig) -> list[Error]:
                     f"Resource '{resource.key}' relation '{relation_name}' lookup field "
                     f"'{relation.lookup_field}' does not exist.",
                     id="fk_import_export.E016",
+                )
+            )
+
+    for field_name in set().union(*field_sets.values()):
+        try:
+            field = model._meta.get_field(field_name)
+        except FieldDoesNotExist:
+            continue
+        if not isinstance(field, Field) or not field.is_relation:
+            continue
+        if field_name not in resource.relations:
+            issues.append(
+                Error(
+                    f"Resource '{resource.key}' relation '{field_name}' requires explicit "
+                    "RELATIONS lookup configuration.",
+                    id="fk_import_export.E018",
+                )
+            )
+        if field.many_to_many and field_name in resource.ordering_fields:
+            issues.append(
+                Error(
+                    f"Resource '{resource.key}' cannot order by many-to-many field '{field_name}'.",
+                    id="fk_import_export.E019",
                 )
             )
     return issues
