@@ -1,8 +1,8 @@
 # API contract
 
 All paths are relative to the prefix where the host mounts `fk_import_export.urls`.
-The foundation endpoints require a staff user while per-resource authorization is
-being implemented.
+All current endpoints require a staff user. Import jobs are additionally scoped to the
+staff user who submitted them; another user receives `404`.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
@@ -10,9 +10,14 @@ being implemented.
 | `GET` | `resources/{key}/` | Available | Show approved fields and relation lookups. |
 | `GET` | `resources/{key}/template/` | Available | Download a CSV header template. |
 | `GET` | `schema/`, `docs/` | Available | OpenAPI schema and Swagger UI. |
-| `POST` | `resources/{key}/imports/preview/` | Planned | Upload and validate without mutation. |
-| `POST` | `import-jobs/{id}/confirm/` | Planned | Atomically commit a reviewed import. |
+| `POST` | `resources/{key}/imports/preview/` | Available | Upload one multipart `file`, validate it, and create a dry-run job. |
+| `GET` | `import-jobs/{id}/` | Available | Read a sanitized, owner-scoped job result. |
+| `POST` | `import-jobs/{id}/confirm/` | Available | Revalidate and atomically commit a successful preview. |
 | `GET` | `resources/{key}/export/` | Planned | Export filtered/scoped records as CSV. |
 
-The planned APIs are not mounted yet; their names are a contract draft, not an
-implementation claim.
+`preview/` accepts UTF-8 CSV in the multipart field `file`. Its headers must exactly
+match `IMPORT_FIELDS`. It returns `201` for both successful previews and persisted row
+failures; only a `previewed` job is confirmation-eligible. Invalid source structure
+returns `400` without storing a job. Confirmation returns `200` on success (including a
+safe retry of an already committed job), `409` if a job cannot be committed, and `404`
+for an unknown or foreign job.

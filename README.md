@@ -2,13 +2,14 @@
 
 `freehand-kit-import-export` is a declarative, CSV-first import/export package for
 Django REST Framework. A host developer registers approved model resources in one
-settings dictionary, mounts one URL, and receives documented discovery, schema, and
-CSV-template APIs. The package uses `django-import-export` as its data engine.
+settings dictionary, mounts one URL, and receives documented discovery, schema,
+CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
+its data engine.
 
-> **Status: pre-release foundation.** Version `0.1.0` establishes the package,
-> registry, validation contract, engine boundary, job model, and Swagger-ready API
-> surface. It is not yet published and must not be used as a production data-mutation
-> service until the preview/confirm import workflow reaches its release gate.
+> **Status: pre-release.** Version `0.2.0` implements a bounded, synchronous,
+> two-phase CSV import workflow. It is not published and is not yet a stable production
+> release: exports, queryset scoping, configurable per-resource permissions, background
+> jobs, and retention operations remain to be implemented.
 
 ## Design promise
 
@@ -20,7 +21,7 @@ workflow.
 API callers never submit arbitrary Django model labels or field names. They select a
 developer-approved resource key such as `products`.
 
-## Planned developer experience
+## Quick start
 
 ```python
 FREEHAND_KIT_IMPORT_EXPORT = {
@@ -49,9 +50,11 @@ urlpatterns = [
 ]
 ```
 
-The foundation exposes its OpenAPI schema and a CSV template at a host-chosen prefix.
-The full import preview, confirmation, export, filter, search, ordering, pagination,
-and asynchronous-job endpoints are the next gated implementation increment.
+Run `python manage.py migrate`, then visit `/api/data/docs/`. Staff users can download
+the template, submit `POST /api/data/resources/products/imports/preview/` as multipart
+form data with a `file` field, review the returned job, and explicitly call
+`POST /api/data/import-jobs/{id}/confirm/`. A preview is dry-run only; confirmation
+revalidates the stored source and applies it atomically.
 
 ## Safety boundary
 
@@ -60,8 +63,11 @@ and asynchronous-job endpoints are the next gated implementation increment.
   denied by default.
 - Import identifiers and relationship lookups must be explicit.
 - Related objects are never auto-created by default.
-- CSV upload limits, transaction semantics, permissions, job auditing, idempotency,
-  and spreadsheet-formula-safe export are mandatory before the first stable release.
+- Uploads are UTF-8 CSV only, with exact configured headers, size/row limits, and no
+  blank rows. Persisted errors contain line numbers and codes—not uploaded cell values.
+- Preview and confirmation use transactions; confirmation is retry-safe after success.
+- Spreadsheet-formula-safe export, queryset scoping, and configurable authorization are
+  still mandatory before the first stable release.
 
 ## Documentation
 

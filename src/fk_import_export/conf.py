@@ -14,6 +14,9 @@ from django.db.models import Field, Model
 
 SETTING_NAME = "FREEHAND_KIT_IMPORT_EXPORT"
 RESOURCE_KEY_MAX_LENGTH = 80
+DEFAULT_MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+DEFAULT_MAX_ROWS = 10_000
+DEFAULT_MAX_ERROR_ROWS = 100
 SENSITIVE_FIELD_NAMES = frozenset(
     {
         "password",
@@ -41,6 +44,14 @@ ALLOWED_RESOURCE_KEYS = frozenset(
         "RELATIONS",
     }
 )
+ALLOWED_SETTING_KEYS = frozenset(
+    {
+        "RESOURCES",
+        "MAX_UPLOAD_BYTES",
+        "MAX_ROWS",
+        "MAX_ERROR_ROWS",
+    }
+)
 
 
 class ResourceConfigurationError(ImproperlyConfigured):
@@ -53,6 +64,15 @@ class RelationConfig:
 
     lookup_field: str
     separator: str = "|"
+
+
+@dataclass(frozen=True)
+class ImportExportSettings:
+    """Validated operational limits for synchronous CSV import previews."""
+
+    max_upload_bytes: int
+    max_rows: int
+    max_error_rows: int
 
 
 @dataclass(frozen=True)
@@ -167,6 +187,15 @@ def _resource_config(key: str, raw_resource: Any) -> ResourceConfig:
             f"Resource '{key}' IMPORT_ID_FIELDS must be included in IMPORT_FIELDS."
         )
 
+    relations = _relation_config(raw_resource.get("RELATIONS"), key=key)
+    declared_fields = set(import_fields) | set(export_fields)
+    undeclared_relations = set(relations) - declared_fields
+    if undeclared_relations:
+        raise ResourceConfigurationError(
+            f"Resource '{key}' RELATIONS must be included in IMPORT_FIELDS or EXPORT_FIELDS: "
+            f"{', '.join(sorted(undeclared_relations))}."
+        )
+
     return ResourceConfig(
         key=key,
         model_label=model_label,
@@ -182,16 +211,59 @@ def _resource_config(key: str, raw_resource: Any) -> ResourceConfig:
         filter_fields=_field_tuple(
             raw_resource.get("FILTER_FIELDS", ()), key=key, setting_key="FILTER_FIELDS"
         ),
-        relations=_relation_config(raw_resource.get("RELATIONS"), key=key),
+        relations=relations,
+    )
+
+
+def _settings_mapping() -> Mapping[str, Any]:
+    """Return and validate the package's namespaced setting mapping."""
+
+    raw_settings = getattr(django_settings, SETTING_NAME, {})
+    if not isinstance(raw_settings, Mapping):
+        raise ResourceConfigurationError(f"{SETTING_NAME} must be a mapping.")
+    unexpected = set(raw_settings) - ALLOWED_SETTING_KEYS
+    if unexpected:
+        raise ResourceConfigurationError(
+            f"{SETTING_NAME} has unsupported setting(s): {', '.join(sorted(map(str, unexpected)))}."
+        )
+    return raw_settings
+
+
+def _positive_int(value: Any, *, setting_key: str, default: int) -> int:
+    if value is None:
+        return default
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ResourceConfigurationError(
+            f"{SETTING_NAME}['{setting_key}'] must be a positive integer."
+        )
+    return value
+
+
+def get_runtime_settings() -> ImportExportSettings:
+    """Return validated operational limits for this package instance."""
+
+    raw_settings = _settings_mapping()
+    return ImportExportSettings(
+        max_upload_bytes=_positive_int(
+            raw_settings.get("MAX_UPLOAD_BYTES"),
+            setting_key="MAX_UPLOAD_BYTES",
+            default=DEFAULT_MAX_UPLOAD_BYTES,
+        ),
+        max_rows=_positive_int(
+            raw_settings.get("MAX_ROWS"), setting_key="MAX_ROWS", default=DEFAULT_MAX_ROWS
+        ),
+        max_error_rows=_positive_int(
+            raw_settings.get("MAX_ERROR_ROWS"),
+            setting_key="MAX_ERROR_ROWS",
+            default=DEFAULT_MAX_ERROR_ROWS,
+        ),
     )
 
 
 def get_resources() -> dict[str, ResourceConfig]:
     """Return validated resource declarations from the host settings module."""
 
-    raw_settings = getattr(django_settings, SETTING_NAME, {})
-    if not isinstance(raw_settings, Mapping):
-        raise ResourceConfigurationError(f"{SETTING_NAME} must be a mapping.")
+    raw_settings = _settings_mapping()
     raw_resources = raw_settings.get("RESOURCES", {})
     if not isinstance(raw_resources, Mapping):
         raise ResourceConfigurationError(f"{SETTING_NAME}['RESOURCES'] must be a mapping.")
@@ -302,6 +374,7 @@ def configuration_issues() -> list[Error]:
     """Return Django system-check errors for unsafe resource declarations."""
 
     try:
+        get_runtime_settings()
         resources = get_resources()
     except ResourceConfigurationError as exc:
         return [Error(str(exc), id="fk_import_export.E001")]

@@ -21,5 +21,23 @@ INSTALLED_APPS = [
 ]
 ```
 
-Mount `fk_import_export.urls` beneath a host-chosen prefix. The first foundation
-endpoints are staff-only while the per-resource policy adapter is completed.
+Mount `fk_import_export.urls` beneath a host-chosen prefix. The endpoints are staff-only
+while the per-resource policy adapter is completed:
+
+```python
+from django.urls import include, path
+
+urlpatterns = [
+    path("api/data/", include("fk_import_export.urls")),
+]
+```
+
+Apply the package migration before accepting imports:
+
+```bash
+python manage.py migrate
+python manage.py check --tag fk_import_export
+```
+
+`ImportJob.source_file` contains submitted CSV data. Configure a private Django media
+storage backend and an explicit retention policy before allowing real data uploads.

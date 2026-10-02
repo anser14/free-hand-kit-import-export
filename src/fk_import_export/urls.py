@@ -3,7 +3,14 @@
 from django.urls import path
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
-from .api.views import ResourceListView, ResourceSchemaView, ResourceTemplateView
+from .api.views import (
+    ImportConfirmView,
+    ImportJobDetailView,
+    ImportPreviewView,
+    ResourceListView,
+    ResourceSchemaView,
+    ResourceTemplateView,
+)
 
 app_name = "fk_import_export"
 
@@ -14,6 +21,17 @@ urlpatterns = [
         "resources/<str:resource_key>/template/",
         ResourceTemplateView.as_view(),
         name="resource-template",
+    ),
+    path(
+        "resources/<str:resource_key>/imports/preview/",
+        ImportPreviewView.as_view(),
+        name="import-preview",
+    ),
+    path("import-jobs/<uuid:job_id>/", ImportJobDetailView.as_view(), name="import-job-detail"),
+    path(
+        "import-jobs/<uuid:job_id>/confirm/",
+        ImportConfirmView.as_view(),
+        name="import-confirm",
     ),
     path("schema/", SpectacularAPIView.as_view(), name="schema"),
     path(

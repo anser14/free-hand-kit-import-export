@@ -23,6 +23,9 @@ class ImportJobAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
         "submitted_by",
         "created_at",
         "updated_at",
+        "previewed_at",
+        "committed_at",
+        "failed_at",
     )
 
     def has_add_permission(self, request):  # type: ignore[no-untyped-def]

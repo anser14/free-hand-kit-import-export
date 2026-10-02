@@ -62,3 +62,15 @@ def test_import_identifiers_must_be_imported_fields() -> None:
         issues = configuration_issues()
 
     assert issues[0].id == "fk_import_export.E001"
+
+
+def test_non_positive_operational_limit_is_reported_by_system_check() -> None:
+    with override_settings(
+        FREEHAND_KIT_IMPORT_EXPORT={
+            "MAX_ROWS": 0,
+            "RESOURCES": {},
+        }
+    ):
+        issues = configuration_issues()
+
+    assert issues[0].id == "fk_import_export.E001"

@@ -9,7 +9,7 @@ from django.db import models
 
 
 class ImportJob(models.Model):
-    """Stored source-file metadata and result summary for an approved resource."""
+    """Stored source metadata and lifecycle audit for one approved CSV import."""
 
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "Uploaded"
@@ -35,6 +35,9 @@ class ImportJob(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    previewed_at = models.DateTimeField(null=True, blank=True)
+    committed_at = models.DateTimeField(null=True, blank=True)
+    failed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ("-created_at",)

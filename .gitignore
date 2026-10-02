@@ -29,6 +29,7 @@ pip-wheel-metadata/
 *.sqlite3
 *.sqlite3-journal
 media/
+tests/.test-media/
 staticfiles/
 *.log
 
