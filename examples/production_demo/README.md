@@ -47,7 +47,7 @@ for preview/confirmation, through Django admin or a group.
 
 ## API workflow
 
-Visit `http://localhost:8000/api/data/docs/` after signing into admin in the same browser.
+Visit `http://localhost:8000/api/docs/` after signing into admin in the same browser.
 The generated Swagger UI exposes the discovery, template, records, export, preview, job,
 error-report, and confirmation endpoints.
 

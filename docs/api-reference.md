@@ -1,16 +1,21 @@
 # API contract
 
-All paths are relative to the prefix where the host mounts `fk_import_export.urls`.
-Each endpoint requires authentication and the configured resource operation permission.
-If `PERMISSIONS` is omitted, the safe compatibility policy is `$staff`. Import jobs are
-additionally scoped to the submitting user; another user receives `404`.
+All resource paths below are relative to the prefix where the host mounts
+`fk_import_export.urls`, commonly `/api/data/`. Each endpoint requires authentication and
+the configured resource operation permission. If `PERMISSIONS` is omitted, the safe
+compatibility policy is `$staff`. Import jobs are additionally scoped to the submitting
+user; another user receives `404`.
+
+Mount `fk_import_export.docs_urls` at the shared `/api/` prefix to expose the unified
+OpenAPI document at `GET /api/schema/` and Swagger UI at `GET /api/docs/`. If another
+Freehand Kit package or the host already owns those two central routes, use that existing
+UI; drf-spectacular includes these import/export endpoints automatically.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `resources/` | Available | List approved resources only. |
 | `GET` | `resources/{key}/` | Available | Show approved fields and relation lookups. |
 | `GET` | `resources/{key}/template/` | Available | Download a CSV header template. |
-| `GET` | `schema/`, `docs/` | Available | OpenAPI schema and Swagger UI. |
 | `POST` | `resources/{key}/imports/preview/` | Available | Upload one multipart `file`, validate it, and create a dry-run job. |
 | `GET` | `import-jobs/` | Available | Paginated, owner-private history for resources the caller may import. |
 | `GET` | `import-jobs/{id}/` | Available | Read a sanitized, owner-scoped job result. |

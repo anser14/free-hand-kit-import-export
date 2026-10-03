@@ -6,7 +6,7 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.9.2` implements bounded, queued CSV import,
+> **Status: pre-release.** Version `0.10.0` implements bounded, queued CSV import,
 > configured records, spreadsheet-safe CSV export, direct tenant/owner scopes, permission
 > policies, progress state, sanitized error reports, opt-in terminal-job retention, and
 > transaction-safe lifecycle hooks. It is not published and is not yet a stable production
@@ -54,10 +54,11 @@ from django.urls import include, path
 
 urlpatterns = [
     path("api/data/", include("fk_import_export.urls")),
+    path("api/", include("fk_import_export.docs_urls")),
 ]
 ```
 
-Run `python manage.py migrate`, then visit `/api/data/docs/`. Staff users can download
+Run `python manage.py migrate`, then visit `/api/docs/`. Staff users can download
 the template, submit `POST /api/data/resources/products/imports/preview/` as multipart
 form data with a `file` field, review the returned job, and explicitly call
 `POST /api/data/import-jobs/{id}/confirm/`. A preview is dry-run only; confirmation
@@ -89,6 +90,10 @@ cells that could be interpreted as spreadsheet formulae are prefixed safely.
 Host apps can subscribe to post-commit import lifecycle signals for notifications or
 auditing; see [integration hooks](docs/integration-hooks.md). Signal receiver failures
 are logged and cannot undo a completed import.
+
+If another Freehand Kit package, such as `fk_auth`, already owns `/api/schema/` and
+`/api/docs/`, do not mount `fk_import_export.docs_urls` again. Its shared schema will
+automatically include the import/export endpoints mounted at `/api/data/`.
 
 ## Safety boundary
 

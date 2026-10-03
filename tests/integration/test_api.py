@@ -73,6 +73,19 @@ def test_staff_can_read_the_configured_resource_schema(staff_client: APIClient) 
 
 
 @pytest.mark.django_db
+def test_central_swagger_routes_document_import_export_at_the_shared_api_prefix(
+    staff_client: APIClient,
+) -> None:
+    with override_settings(ROOT_URLCONF="tests.central_urls"):
+        schema_response = staff_client.get("/api/schema/")
+        docs_response = staff_client.get("/api/docs/")
+
+    assert schema_response.status_code == 200
+    assert "/api/data/resources/" in schema_response.content.decode()
+    assert docs_response.status_code == 200
+
+
+@pytest.mark.django_db
 def test_unknown_resource_is_not_disclosed(staff_client: APIClient) -> None:
     response = staff_client.get("/resources/not_registered/")
 

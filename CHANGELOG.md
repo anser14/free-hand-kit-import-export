@@ -3,6 +3,14 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-10-03
+
+### Added
+
+- Optional central OpenAPI routes for the shared Freehand Kit convention:
+  `/api/schema/` and `/api/docs/`. They document import/export endpoints alongside
+  every other host DRF API without moving resource endpoints from `/api/data/`.
+
 ## [0.9.2] - 2026-10-03
 
 ### Changed
