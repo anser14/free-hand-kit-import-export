@@ -10,6 +10,7 @@ they retain ownership of Django models, permissions, storage, and business rules
 - [Installation](installation.md)
 - [Configuration](configuration.md)
 - [API reference](api-reference.md)
+- [Integration hooks](integration-hooks.md)
 - [Security](security.md)
 - [Operations](operations.md)
 - [Testing](testing.md)

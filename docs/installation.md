@@ -21,8 +21,9 @@ INSTALLED_APPS = [
 ]
 ```
 
-Mount `fk_import_export.urls` beneath a host-chosen prefix. The endpoints are staff-only
-while the per-resource policy adapter is completed:
+Mount `fk_import_export.urls` beneath a host-chosen prefix. Every endpoint requires
+authentication and the configured resource policy; resources without explicit
+`PERMISSIONS` use the safe `$staff` compatibility policy:
 
 ```python
 from django.urls import include, path

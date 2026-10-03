@@ -3,6 +3,17 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-10-03
+
+### Added
+
+- Transaction-safe Django lifecycle signals for previewed, queued, committed, and failed
+  import jobs.
+
+### Changed
+
+- Corrected the package runtime version to match distribution metadata.
+
 ## [0.6.0] - 2026-10-03
 
 ### Added

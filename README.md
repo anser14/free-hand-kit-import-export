@@ -6,9 +6,10 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.6.0` implements bounded, queued CSV import,
+> **Status: pre-release.** Version `0.7.0` implements bounded, queued CSV import,
 > configured records, spreadsheet-safe CSV export, direct tenant/owner scopes, permission
-> policies, progress state, sanitized error reports, and opt-in terminal-job retention.
+> policies, progress state, sanitized error reports, opt-in terminal-job retention, and
+> transaction-safe lifecycle hooks.
 > It is not published and is not yet a stable production release: application-specific
 > complex authorization policies remain.
 
@@ -85,6 +86,10 @@ JSON and `GET /api/data/resources/products/export/` for bounded CSV. Both accept
 developer-configured `search`, `ordering`, and `filter.<field>` controls. CSV export
 cells that could be interpreted as spreadsheet formulae are prefixed safely.
 
+Host apps can subscribe to post-commit import lifecycle signals for notifications or
+auditing; see [integration hooks](docs/integration-hooks.md). Signal receiver failures
+are logged and cannot undo a completed import.
+
 ## Safety boundary
 
 - Only explicitly registered resources are discoverable.
@@ -105,6 +110,7 @@ cells that could be interpreted as spreadsheet formulae are prefixed safely.
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
 - [API contract](docs/api-reference.md)
+- [Integration hooks](docs/integration-hooks.md)
 - [Security](docs/security.md)
 
 ## License

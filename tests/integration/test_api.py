@@ -16,6 +16,12 @@ from rest_framework.test import APIClient
 from fk_import_export.conf import get_runtime_settings
 from fk_import_export.models import ImportJob
 from fk_import_export.services import recover_stale_import_jobs
+from fk_import_export.signals import (
+    import_job_committed,
+    import_job_failed,
+    import_job_previewed,
+    import_job_queued,
+)
 from tests.settings import FREEHAND_KIT_IMPORT_EXPORT
 from tests.test_app.models import Category, Product, Tag
 
@@ -696,3 +702,83 @@ def test_source_retention_keeps_audit_record_when_storage_deletion_fails(
     job.refresh_from_db()
     assert job.source_file.name
     assert job.source_deleted_at is None
+
+
+@pytest.mark.django_db(transaction=True)
+def test_lifecycle_signals_are_delivered_after_committed_transitions(
+    staff_client: APIClient,
+) -> None:
+    Category.objects.create(slug="hardware", name="Hardware")
+    events: list[tuple[str, object, str, object]] = []
+
+    def capture(event_name: str):  # type: ignore[no-untyped-def]
+        def receiver(sender, **kwargs):  # type: ignore[no-untyped-def]
+            events.append(
+                (
+                    event_name,
+                    kwargs["job_id"],
+                    kwargs["resource_key"],
+                    kwargs["submitted_by_id"],
+                )
+            )
+
+        return receiver
+
+    receivers = [
+        (import_job_previewed, capture("previewed")),
+        (import_job_queued, capture("queued")),
+        (import_job_committed, capture("committed")),
+        (import_job_failed, capture("failed")),
+    ]
+    for signal, receiver in receivers:
+        signal.connect(receiver, weak=False)
+    try:
+        preview_response = staff_client.post(
+            "/resources/products/imports/preview/",
+            {"file": _csv_upload(b"sku,name,price,category\nEVENT-001,Keyboard,99.99,hardware\n")},
+            format="multipart",
+        )
+        job_id = preview_response.json()["id"]
+        confirm_response = staff_client.post(f"/import-jobs/{job_id}/confirm/", format="json")
+        assert confirm_response.status_code == 202
+        call_command("process_import_jobs")
+
+        failed_response = staff_client.post(
+            "/resources/products/imports/preview/",
+            {
+                "file": _csv_upload(
+                    b"sku,name,price,category\nEVENT-FAIL,Keyboard,99.99,missing-category\n"
+                )
+            },
+            format="multipart",
+        )
+    finally:
+        for signal, receiver in receivers:
+            signal.disconnect(receiver)
+
+    assert preview_response.status_code == 201
+    assert failed_response.status_code == 201
+    assert [event[0] for event in events] == ["previewed", "queued", "committed", "failed"]
+    assert all(event[1] for event in events)
+    assert all(event[2] == "products" for event in events)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_failing_lifecycle_receiver_cannot_break_preview(staff_client: APIClient, caplog) -> None:
+    Category.objects.create(slug="hardware", name="Hardware")
+
+    def failing_receiver(sender, **kwargs):  # type: ignore[no-untyped-def]
+        raise RuntimeError("test receiver failure")
+
+    import_job_previewed.connect(failing_receiver, weak=False)
+    try:
+        response = staff_client.post(
+            "/resources/products/imports/preview/",
+            {"file": _csv_upload(b"sku,name,price,category\nHOOK-001,Keyboard,99.99,hardware\n")},
+            format="multipart",
+        )
+    finally:
+        import_job_previewed.disconnect(failing_receiver)
+
+    assert response.status_code == 201
+    assert "lifecycle receiver failed" in caplog.text

@@ -23,6 +23,7 @@ from .conf import ImportExportSettings, ResourceConfig, ResourceConfigurationErr
 from .models import ImportJob
 from .policies import resolve_scope
 from .registry import resource_class
+from .signals import send_lifecycle_signal
 
 
 class ImportPayloadError(ValueError):
@@ -281,6 +282,7 @@ def _update_lifecycle(
     progress_total: int | None = None,
     progress_completed: int | None = None,
 ) -> ImportJob:
+    previous_status = job.status
     now = timezone.now()
     job.status = status
     update_fields = ["status", "updated_at"]
@@ -315,6 +317,15 @@ def _update_lifecycle(
         job.failed_at = now
         update_fields.append("failed_at")
     job.save(update_fields=update_fields)
+    transaction.on_commit(
+        lambda: send_lifecycle_signal(
+            previous_status=previous_status,
+            job_id=job.id,
+            resource_key=job.resource_key,
+            submitted_by_id=job.submitted_by_id,
+            status=status,
+        )
+    )
     return job
 
 
