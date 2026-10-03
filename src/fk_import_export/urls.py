@@ -7,6 +7,7 @@ from .api.views import (
     ImportConfirmView,
     ImportJobDetailView,
     ImportJobErrorsView,
+    ImportJobListView,
     ImportPreviewView,
     ResourceExportView,
     ResourceListView,
@@ -40,6 +41,7 @@ urlpatterns = [
         ResourceExportView.as_view(),
         name="resource-export",
     ),
+    path("import-jobs/", ImportJobListView.as_view(), name="import-job-list"),
     path("import-jobs/<uuid:job_id>/", ImportJobDetailView.as_view(), name="import-job-detail"),
     path(
         "import-jobs/<uuid:job_id>/errors/",

@@ -121,6 +121,7 @@ def test_declared_django_permissions_allow_non_staff_per_operation() -> None:
         assert client.get("/resources/").status_code == 200
         assert client.get("/resources/products/records/").status_code == 200
         assert client.get("/resources/products/export/").status_code == 403
+        assert client.get("/import-jobs/").status_code == 403
         assert (
             client.post("/resources/products/imports/preview/", {}, format="multipart").status_code
             == 403
@@ -501,6 +502,57 @@ def test_import_jobs_are_private_to_the_submitting_staff_user(staff_client: APIC
     assert other_client.get(f"/import-jobs/{job_id}/").status_code == 404
     assert other_client.post(f"/import-jobs/{job_id}/confirm/", format="json").status_code == 404
     assert other_client.get(f"/import-jobs/{job_id}/errors/").status_code == 404
+
+
+@pytest.mark.django_db
+def test_import_job_history_is_private_paginated_and_permission_filtered(
+    staff_client: APIClient,
+) -> None:
+    Category.objects.create(slug="hardware", name="Hardware")
+    first_response = staff_client.post(
+        "/resources/products/imports/preview/",
+        {"file": _csv_upload(b"sku,name,price,category\nHISTORY-001,Keyboard,99.99,hardware\n")},
+        format="multipart",
+    )
+    second_response = staff_client.post(
+        "/resources/products/imports/preview/",
+        {"file": _csv_upload(b"sku,name,price,category\nHISTORY-002,Mouse,49.99,hardware\n")},
+        format="multipart",
+    )
+    other_staff = get_user_model().objects.create_user(
+        username="history-other",
+        password="not-used",
+        is_staff=True,
+    )
+    other_client = APIClient()
+    other_client.force_authenticate(user=other_staff)
+    other_response = other_client.post(
+        "/resources/products/imports/preview/",
+        {"file": _csv_upload(b"sku,name,price,category\nHISTORY-OTHER,Mouse,49.99,hardware\n")},
+        format="multipart",
+    )
+
+    first_page = staff_client.get("/import-jobs/?status=previewed&page_size=1")
+    second_page = staff_client.get("/import-jobs/?status=previewed&page_size=1&page=2")
+    filtered = staff_client.get("/import-jobs/?resource=products")
+    invalid = staff_client.get("/import-jobs/?status=unknown")
+
+    assert first_response.status_code == 201
+    assert second_response.status_code == 201
+    assert other_response.status_code == 201
+    assert first_page.status_code == 200
+    assert first_page.json()["count"] == 2
+    assert first_page.json()["total_pages"] == 2
+    assert len(first_page.json()["results"]) == 1
+    assert second_page.status_code == 200
+    returned_ids = {
+        first_page.json()["results"][0]["id"],
+        second_page.json()["results"][0]["id"],
+    }
+    assert returned_ids == {first_response.json()["id"], second_response.json()["id"]}
+    assert other_response.json()["id"] not in returned_ids
+    assert filtered.json()["count"] == 2
+    assert invalid.status_code == 400
 
 
 @pytest.mark.django_db

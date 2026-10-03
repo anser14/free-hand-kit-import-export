@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+from math import ceil
 from uuid import UUID
 
 from django.contrib.auth.models import AbstractBaseUser
@@ -22,6 +23,7 @@ from fk_import_export.conf import (
     get_resources,
     get_runtime_settings,
 )
+from fk_import_export.models import ImportJob
 from fk_import_export.policies import has_resource_permission
 from fk_import_export.querying import (
     ExportLimitError,
@@ -39,6 +41,7 @@ from fk_import_export.services import (
 )
 
 from .serializers import (
+    ImportJobPageSerializer,
     ImportJobSerializer,
     ImportPreviewSerializer,
     RecordPageSerializer,
@@ -66,6 +69,33 @@ RESOURCE_QUERY_PARAMETERS = [
         type=OpenApiTypes.STR,
         location=OpenApiParameter.QUERY,
         description="Exact-match filter for a configured FILTER_FIELDS entry.",
+    ),
+]
+
+IMPORT_JOB_LIST_PARAMETERS = [
+    OpenApiParameter(
+        name="resource",
+        type=OpenApiTypes.STR,
+        location=OpenApiParameter.QUERY,
+        description="Optional configured resource key, limited to resources the caller may import.",
+    ),
+    OpenApiParameter(
+        name="status",
+        type=OpenApiTypes.STR,
+        location=OpenApiParameter.QUERY,
+        description="Optional exact import job status.",
+    ),
+    OpenApiParameter(
+        name="page",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        description="One-based page number.",
+    ),
+    OpenApiParameter(
+        name="page_size",
+        type=OpenApiTypes.INT,
+        location=OpenApiParameter.QUERY,
+        description="Results per page, bounded by MAX_PAGE_SIZE.",
     ),
 ]
 
@@ -113,10 +143,7 @@ class ResourceAccessAPIView(APIView):
         return user
 
 
-@extend_schema(
-    tags=["Freehand Kit Import Export"],
-    responses={200: ResourceSerializer(many=True)},
-)
+@extend_schema(tags=["Freehand Kit Import Export"], responses={200: ResourceSerializer(many=True)})
 class ResourceListView(ResourceAccessAPIView):
     """List only developer-registered resources; never enumerate installed models."""
 
@@ -302,6 +329,97 @@ class ImportJobAccessAPIView(ResourceAccessAPIView):
         return job
 
 
+def _job_page_parameter(raw_value: str | None, *, name: str, default: int, maximum: int) -> int:
+    if raw_value is None:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"'{name}' must be a positive integer.") from exc
+    if value < 1 or value > maximum:
+        raise ValueError(f"'{name}' must be between 1 and {maximum}.")
+    return value
+
+
+@extend_schema(
+    tags=["Freehand Kit Import Export"],
+    parameters=IMPORT_JOB_LIST_PARAMETERS,
+    responses={
+        200: ImportJobPageSerializer,
+        400: OpenApiResponse(description="Invalid job-history query parameter."),
+        403: OpenApiResponse(description="No import permission for any registered resource."),
+    },
+)
+class ImportJobListView(ResourceAccessAPIView):
+    """Return a bounded history of import jobs owned by the authenticated caller."""
+
+    @extend_schema(operation_id="fk_import_export_import_job_list")
+    def get(self, request):  # type: ignore[no-untyped-def]
+        submitted_by = self.get_submitting_user(request)
+        allowed_resources = {
+            key
+            for key, resource in get_resources().items()
+            if has_resource_permission(resource=resource, user=submitted_by, operation="IMPORT")
+        }
+        if not allowed_resources:
+            raise PermissionDenied("You do not have permission to view import jobs.")
+
+        permitted_parameters = {"resource", "status", "page", "page_size"}
+        for key, values in request.query_params.lists():
+            if key not in permitted_parameters or len(values) != 1:
+                return Response(
+                    {"detail": f"Unsupported or repeated query parameter '{key}'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        resource_key = request.query_params.get("resource")
+        if resource_key is not None and resource_key not in allowed_resources:
+            raise Http404("Resource not found.")
+        raw_status = request.query_params.get("status")
+        statuses = set(ImportJob.Status.values)
+        if raw_status is not None and raw_status not in statuses:
+            return Response(
+                {"detail": "'status' must be a valid import job status."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        limits = get_runtime_settings()
+        try:
+            page = _job_page_parameter(
+                request.query_params.get("page"),
+                name="page",
+                default=1,
+                maximum=2_147_483_647,
+            )
+            page_size = _job_page_parameter(
+                request.query_params.get("page_size"),
+                name="page_size",
+                default=limits.page_size,
+                maximum=limits.max_page_size,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        jobs = ImportJob.objects.filter(
+            submitted_by_id=submitted_by.pk,
+            resource_key__in=allowed_resources,
+        ).order_by("-created_at")
+        if resource_key is not None:
+            jobs = jobs.filter(resource_key=resource_key)
+        if raw_status is not None:
+            jobs = jobs.filter(status=raw_status)
+        count = jobs.count()
+        page_jobs = list(jobs[(page - 1) * page_size : page * page_size])
+        return Response(
+            {
+                "count": count,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": ceil(count / page_size) if count else 0,
+                "results": ImportJobSerializer(page_jobs, many=True).data,
+            }
+        )
+
+
 @extend_schema(
     tags=["Freehand Kit Import Export"],
     responses={404: OpenApiResponse(description="Unknown or unavailable import job.")},
@@ -309,6 +427,7 @@ class ImportJobAccessAPIView(ResourceAccessAPIView):
 class ImportJobDetailView(ImportJobAccessAPIView):
     """Return a sanitized import job visible only to its submitting user."""
 
+    @extend_schema(operation_id="fk_import_export_import_job_detail")
     def get(self, request, job_id: UUID):  # type: ignore[no-untyped-def]
         return Response(ImportJobSerializer(self.get_job(request, job_id)).data)
 

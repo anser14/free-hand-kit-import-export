@@ -12,6 +12,7 @@ additionally scoped to the submitting user; another user receives `404`.
 | `GET` | `resources/{key}/template/` | Available | Download a CSV header template. |
 | `GET` | `schema/`, `docs/` | Available | OpenAPI schema and Swagger UI. |
 | `POST` | `resources/{key}/imports/preview/` | Available | Upload one multipart `file`, validate it, and create a dry-run job. |
+| `GET` | `import-jobs/` | Available | Paginated, owner-private history for resources the caller may import. |
 | `GET` | `import-jobs/{id}/` | Available | Read a sanitized, owner-scoped job result. |
 | `POST` | `import-jobs/{id}/confirm/` | Available | Queue a successful preview for worker execution. |
 | `GET` | `import-jobs/{id}/errors/` | Available | Download sanitized row-level error metadata as CSV. |
@@ -27,6 +28,12 @@ job, `409` if a job cannot be queued, and `404` for an unknown or foreign job. T
 detail payload exposes queue status, attempt count, and coarse atomic progress. A worker
 must run `python manage.py process_import_jobs`; the public command can also be invoked
 by a scheduler or wrapped by the host's preferred task runner.
+
+`import-jobs/` accepts `resource`, `status`, `page`, and `page_size`. It returns only the
+authenticated caller's jobs whose current resource configuration grants `IMPORT` access.
+The endpoint rejects repeated or unknown query parameters, bounds pages by
+`MAX_PAGE_SIZE`, and does not disclose jobs belonging to other users or inaccessible
+resources.
 
 `errors/` contains only a CSV header plus sanitized `line`, `code`, and field-name
 metadata. It never includes uploaded cell values or database exception text. Its

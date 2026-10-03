@@ -68,6 +68,16 @@ class ImportJobSerializer(serializers.ModelSerializer[ImportJob]):
         return {"total_rows": total, "completed_rows": completed, "percent": percent}
 
 
+class ImportJobPageSerializer(serializers.Serializer[dict[str, object]]):
+    """OpenAPI contract for the authenticated caller's paginated import history."""
+
+    count = serializers.IntegerField(min_value=0)
+    page = serializers.IntegerField(min_value=1)
+    page_size = serializers.IntegerField(min_value=1)
+    total_pages = serializers.IntegerField(min_value=0)
+    results = ImportJobSerializer(many=True)
+
+
 class RecordPageSerializer(serializers.Serializer[dict[str, object]]):
     """OpenAPI contract for a page of dynamically configured export records."""
 

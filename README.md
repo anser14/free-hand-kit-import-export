@@ -6,7 +6,7 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.8.0` implements bounded, queued CSV import,
+> **Status: pre-release.** Version `0.9.0` implements bounded, queued CSV import,
 > configured records, spreadsheet-safe CSV export, direct tenant/owner scopes, permission
 > policies, progress state, sanitized error reports, opt-in terminal-job retention, and
 > transaction-safe lifecycle hooks. It is not published and is not yet a stable production
@@ -79,6 +79,7 @@ python manage.py purge_import_jobs --apply
 The worker revalidates the stored source and atomically applies the import. Poll
 `GET /api/data/import-jobs/{id}/` for queue state and progress, or download its
 sanitized failure metadata from `GET /api/data/import-jobs/{id}/errors/`.
+Use `GET /api/data/import-jobs/` for the caller's paginated, permission-filtered history.
 
 Authorized users can also use `GET /api/data/resources/products/records/` for paginated
 JSON and `GET /api/data/resources/products/export/` for bounded CSV. Both accept only

@@ -3,6 +3,13 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] - 2026-10-03
+
+### Added
+
+- Owner-private, import-permission-filtered `GET import-jobs/` history with bounded
+  pagination and resource/status filters.
+
 ## [0.8.0] - 2026-10-03
 
 ### Added
