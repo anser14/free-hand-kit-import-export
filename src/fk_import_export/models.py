@@ -14,6 +14,8 @@ class ImportJob(models.Model):
     class Status(models.TextChoices):
         UPLOADED = "uploaded", "Uploaded"
         PREVIEWED = "previewed", "Previewed"
+        QUEUED = "queued", "Queued"
+        PROCESSING = "processing", "Processing"
         COMMITTED = "committed", "Committed"
         FAILED = "failed", "Failed"
 
@@ -26,6 +28,9 @@ class ImportJob(models.Model):
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.UPLOADED)
     summary = models.JSONField(default=dict, blank=True)
     errors = models.JSONField(default=list, blank=True)
+    progress_total = models.PositiveIntegerField(default=0)
+    progress_completed = models.PositiveIntegerField(default=0)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
     submitted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -36,6 +41,8 @@ class ImportJob(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     previewed_at = models.DateTimeField(null=True, blank=True)
+    queued_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
     committed_at = models.DateTimeField(null=True, blank=True)
     failed_at = models.DateTimeField(null=True, blank=True)
 
@@ -44,6 +51,7 @@ class ImportJob(models.Model):
         indexes = [
             models.Index(fields=("resource_key", "status")),
             models.Index(fields=("created_at",)),
+            models.Index(fields=("status", "created_at"), name="fk_import_e_status_created_idx"),
         ]
 
     def __str__(self) -> str:

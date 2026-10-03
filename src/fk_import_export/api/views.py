@@ -275,28 +275,90 @@ class ImportJobDetailView(ImportJobAccessAPIView):
         return Response(ImportJobSerializer(self.get_job(request, job_id)).data)
 
 
+def _safe_error_report_cell(value: object) -> str:
+    """Defend the CSV report even if an operator edited job JSON manually."""
+
+    text = str(value)
+    if text.lstrip().startswith(("=", "+", "-", "@")):
+        return f"'{text}"
+    return text
+
+
+@extend_schema(
+    tags=["Freehand Kit Import Export"],
+    responses={
+        200: OpenApiResponse(description="Sanitized CSV sample of this job's row-level errors."),
+        404: OpenApiResponse(description="Unknown or unavailable import job."),
+    },
+)
+class ImportJobErrorsView(ImportJobAccessAPIView):
+    """Download only sanitized error metadata for an owner-visible import job."""
+
+    def get(self, request, job_id: UUID):  # type: ignore[no-untyped-def]
+        job = self.get_job(request, job_id)
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="import-job-{job.id}-errors.csv"'
+        response["X-Freehand-Errors-Truncated"] = str(
+            bool(job.summary.get("errors_truncated", False))
+        ).lower()
+        writer = csv.writer(response, lineterminator="\n")
+        writer.writerow(("line", "code", "fields"))
+        for raw_error in job.errors:
+            if not isinstance(raw_error, dict):
+                continue
+            raw_line = raw_error.get("line")
+            line = raw_line if isinstance(raw_line, int) and raw_line > 0 else ""
+            raw_code = raw_error.get("code")
+            code = (
+                raw_code
+                if isinstance(raw_code, str)
+                and raw_code in {"validation_error", "processing_error", "dataset_error"}
+                else "processing_error"
+            )
+            raw_fields = raw_error.get("fields", [])
+            fields = (
+                "|".join(
+                    field for field in raw_fields if isinstance(field, str) and field.isidentifier()
+                )
+                if isinstance(raw_fields, list)
+                else ""
+            )
+            writer.writerow(
+                (
+                    _safe_error_report_cell(line),
+                    _safe_error_report_cell(code),
+                    _safe_error_report_cell(fields),
+                )
+            )
+        return response
+
+
 @extend_schema(
     tags=["Freehand Kit Import Export"],
     request=None,
     responses={
         200: ImportJobSerializer,
+        202: ImportJobSerializer,
         404: OpenApiResponse(description="Unknown or unavailable import job."),
         409: OpenApiResponse(description="Job cannot be confirmed in its current state."),
     },
 )
 class ImportConfirmView(ImportJobAccessAPIView):
-    """Revalidate and atomically commit a previously successful preview."""
+    """Atomically enqueue a previously successful preview for worker execution."""
 
     def post(self, request, job_id: UUID):  # type: ignore[no-untyped-def]
         try:
             result = confirm_import(
                 job_id=job_id,
                 submitted_by=self.get_submitting_user(request),
-                limits=get_runtime_settings(),
             )
         except ImportJobNotFound as exc:
             raise Http404("Import job not found.") from exc
         except ImportJobStateError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
-        response_status = status.HTTP_200_OK if result.committed else status.HTTP_409_CONFLICT
+        response_status = (
+            status.HTTP_200_OK
+            if result.job.status == result.job.Status.COMMITTED
+            else status.HTTP_202_ACCEPTED
+        )
         return Response(ImportJobSerializer(result.job).data, status=response_status)

@@ -10,6 +10,8 @@ FREEHAND_KIT_IMPORT_EXPORT = {
     "PAGE_SIZE": 100,
     "MAX_PAGE_SIZE": 500,
     "MAX_EXPORT_ROWS": 10_000,
+    "PROCESSING_TIMEOUT_SECONDS": 60 * 60,
+    "MAX_ATTEMPTS": 3,
     "RESOURCES": {
         "products": {
             "MODEL": "inventory.Product",
@@ -38,6 +40,11 @@ The optional operational limits above are positive integers. The defaults are 5 
 10,000 data rows, and 100 stored error entries. CSV headers must exactly match the
 configured `IMPORT_FIELDS` set; this prevents callers from smuggling extra model fields
 into the import engine. Relation names must be declared in import or export fields.
+
+`PROCESSING_TIMEOUT_SECONDS` controls when a worker considers an interrupted
+`processing` job stale. `MAX_ATTEMPTS` caps recovery retries; a stale job at the cap is
+marked failed with a sanitized processing error. Set both values from realistic worker
+timeouts and the maximum execution time of your largest permitted upload.
 
 `records/` supports `search`, `ordering`, `page`, `page_size`, and exact
 `filter.<field>` parameters only when their fields are explicitly present in

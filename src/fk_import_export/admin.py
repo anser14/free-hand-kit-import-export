@@ -7,7 +7,15 @@ from .models import ImportJob
 
 @admin.register(ImportJob)
 class ImportJobAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
-    list_display = ("id", "resource_key", "status", "submitted_by", "created_at")
+    list_display = (
+        "id",
+        "resource_key",
+        "status",
+        "progress_completed",
+        "progress_total",
+        "submitted_by",
+        "created_at",
+    )
     list_filter = ("resource_key", "status")
     search_fields = ("id", "source_name", "source_sha256")
     readonly_fields = (
@@ -20,10 +28,15 @@ class ImportJobAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
         "status",
         "summary",
         "errors",
+        "progress_total",
+        "progress_completed",
+        "attempt_count",
         "submitted_by",
         "created_at",
         "updated_at",
         "previewed_at",
+        "queued_at",
+        "started_at",
         "committed_at",
         "failed_at",
     )

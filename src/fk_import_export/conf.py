@@ -20,6 +20,8 @@ DEFAULT_MAX_ERROR_ROWS = 100
 DEFAULT_PAGE_SIZE = 100
 DEFAULT_MAX_PAGE_SIZE = 500
 DEFAULT_MAX_EXPORT_ROWS = 10_000
+DEFAULT_PROCESSING_TIMEOUT_SECONDS = 60 * 60
+DEFAULT_MAX_ATTEMPTS = 3
 SENSITIVE_FIELD_NAMES = frozenset(
     {
         "password",
@@ -56,6 +58,8 @@ ALLOWED_SETTING_KEYS = frozenset(
         "PAGE_SIZE",
         "MAX_PAGE_SIZE",
         "MAX_EXPORT_ROWS",
+        "PROCESSING_TIMEOUT_SECONDS",
+        "MAX_ATTEMPTS",
     }
 )
 
@@ -74,7 +78,7 @@ class RelationConfig:
 
 @dataclass(frozen=True)
 class ImportExportSettings:
-    """Validated operational limits for synchronous API workflows."""
+    """Validated operational limits for the import/export API and queue worker."""
 
     max_upload_bytes: int
     max_rows: int
@@ -82,6 +86,8 @@ class ImportExportSettings:
     page_size: int
     max_page_size: int
     max_export_rows: int
+    processing_timeout_seconds: int
+    max_attempts: int
 
 
 @dataclass(frozen=True)
@@ -284,6 +290,16 @@ def get_runtime_settings() -> ImportExportSettings:
             raw_settings.get("MAX_EXPORT_ROWS"),
             setting_key="MAX_EXPORT_ROWS",
             default=DEFAULT_MAX_EXPORT_ROWS,
+        ),
+        processing_timeout_seconds=_positive_int(
+            raw_settings.get("PROCESSING_TIMEOUT_SECONDS"),
+            setting_key="PROCESSING_TIMEOUT_SECONDS",
+            default=DEFAULT_PROCESSING_TIMEOUT_SECONDS,
+        ),
+        max_attempts=_positive_int(
+            raw_settings.get("MAX_ATTEMPTS"),
+            setting_key="MAX_ATTEMPTS",
+            default=DEFAULT_MAX_ATTEMPTS,
         ),
     )
 

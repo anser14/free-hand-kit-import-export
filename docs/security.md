@@ -2,13 +2,15 @@
 
 Import/export is privileged data mutation. This pre-release implementation enforces a
 resource allowlist, direct safe fields, staff access, owner-scoped jobs, upload limits,
-auditing, dry-run preview, source hashing, and atomic confirmation. It deliberately
+auditing, dry-run preview, source hashing, a durable worker queue, and atomic execution.
+It deliberately
 does not trust a client-supplied model label, field list, or stored preview alone.
 
 The CSV parser accepts UTF-8 only, requires exact configured headers, rejects duplicate
 headers, NUL bytes, blank rows, malformed rows, and files over configured limits. API
 error records contain line numbers, error categories, and validation field names; they
-never include uploaded cell values or raw database exception text.
+never include uploaded cell values or raw database exception text. The downloadable error
+report applies the same contract and is owner-scoped.
 
 Source files can contain sensitive data. Use a private storage backend, deny direct
 media access, encrypt storage where appropriate, and define a retention/deletion job.

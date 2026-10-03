@@ -1,14 +1,19 @@
 import csv
 import io
+from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
+from fk_import_export.conf import get_runtime_settings
 from fk_import_export.models import ImportJob
+from fk_import_export.services import recover_stale_import_jobs
 from tests.settings import FREEHAND_KIT_IMPORT_EXPORT
 from tests.test_app.models import Category, Product, Tag
 
@@ -190,7 +195,9 @@ def _csv_upload(content: bytes, name: str = "products.csv") -> SimpleUploadedFil
 
 
 @pytest.mark.django_db
-def test_preview_is_dry_run_then_confirmation_commits_once(staff_client: APIClient) -> None:
+def test_preview_is_dry_run_then_confirmation_queues_and_worker_commits_once(
+    staff_client: APIClient,
+) -> None:
     Category.objects.create(slug="hardware", name="Hardware")
     response = staff_client.post(
         "/resources/products/imports/preview/",
@@ -207,15 +214,32 @@ def test_preview_is_dry_run_then_confirmation_commits_once(staff_client: APIClie
     job_id = response.json()["id"]
     confirm_response = staff_client.post(f"/import-jobs/{job_id}/confirm/", format="json")
 
-    assert confirm_response.status_code == 200
-    assert confirm_response.json()["status"] == ImportJob.Status.COMMITTED
+    assert confirm_response.status_code == 202
+    assert confirm_response.json()["status"] == ImportJob.Status.QUEUED
+    assert confirm_response.json()["progress"] == {
+        "total_rows": 1,
+        "completed_rows": 0,
+        "percent": 0,
+    }
     assert confirm_response.json()["confirmation_eligible"] is False
-    assert Product.objects.get(sku="SKU-001").category.slug == "hardware"
+    assert Product.objects.count() == 0
 
     retry_response = staff_client.post(f"/import-jobs/{job_id}/confirm/", format="json")
 
-    assert retry_response.status_code == 200
-    assert retry_response.json()["status"] == ImportJob.Status.COMMITTED
+    assert retry_response.status_code == 202
+    assert retry_response.json()["status"] == ImportJob.Status.QUEUED
+
+    call_command("process_import_jobs")
+
+    job_response = staff_client.get(f"/import-jobs/{job_id}/")
+    assert job_response.status_code == 200
+    assert job_response.json()["status"] == ImportJob.Status.COMMITTED
+    assert job_response.json()["progress"] == {
+        "total_rows": 1,
+        "completed_rows": 1,
+        "percent": 100,
+    }
+    assert Product.objects.get(sku="SKU-001").category.slug == "hardware"
     assert Product.objects.count() == 1
 
 
@@ -281,6 +305,7 @@ def test_import_jobs_are_private_to_the_submitting_staff_user(staff_client: APIC
 
     assert other_client.get(f"/import-jobs/{job_id}/").status_code == 404
     assert other_client.post(f"/import-jobs/{job_id}/confirm/", format="json").status_code == 404
+    assert other_client.get(f"/import-jobs/{job_id}/errors/").status_code == 404
 
 
 @pytest.mark.django_db
@@ -300,9 +325,13 @@ def test_confirmation_rejects_a_tampered_stored_source(staff_client: APIClient) 
 
     confirm_response = staff_client.post(f"/import-jobs/{job.id}/confirm/", format="json")
 
-    assert confirm_response.status_code == 409
-    assert confirm_response.json()["status"] == ImportJob.Status.FAILED
-    assert confirm_response.json()["errors"] == [{"line": None, "code": "processing_error"}]
+    assert confirm_response.status_code == 202
+    call_command("process_import_jobs")
+
+    detail_response = staff_client.get(f"/import-jobs/{job.id}/")
+    assert detail_response.status_code == 200
+    assert detail_response.json()["status"] == ImportJob.Status.FAILED
+    assert detail_response.json()["errors"] == [{"line": None, "code": "processing_error"}]
     assert Product.objects.count() == 0
 
 
@@ -327,3 +356,95 @@ def test_preview_enforces_configured_row_limit(staff_client: APIClient) -> None:
     assert response.status_code == 400
     assert "row limit" in response.json()["detail"]
     assert ImportJob.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_error_report_is_sanitized_csv_for_the_submitting_user(staff_client: APIClient) -> None:
+    response = staff_client.post(
+        "/resources/products/imports/preview/",
+        {
+            "file": _csv_upload(
+                b"sku,name,price,category\nSECRET-SKU,Keyboard,not-a-price,missing-category\n"
+            )
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == 201
+    report_response = staff_client.get(f"/import-jobs/{response.json()['id']}/errors/")
+
+    assert report_response.status_code == 200
+    assert report_response["Content-Type"].startswith("text/csv")
+    assert report_response["X-Freehand-Errors-Truncated"] == "false"
+    assert list(csv.reader(io.StringIO(report_response.content.decode()))) == [
+        ["line", "code", "fields"],
+        ["2", "processing_error", ""],
+    ]
+    assert b"SECRET-SKU" not in report_response.content
+    assert b"not-a-price" not in report_response.content
+
+
+@pytest.mark.django_db
+def test_stale_processing_job_is_requeued_then_processed(staff_client: APIClient) -> None:
+    category = Category.objects.create(slug="hardware", name="Hardware")
+    queue_settings = {
+        **FREEHAND_KIT_IMPORT_EXPORT,
+        "PROCESSING_TIMEOUT_SECONDS": 1,
+        "MAX_ATTEMPTS": 2,
+    }
+    with override_settings(FREEHAND_KIT_IMPORT_EXPORT=queue_settings):
+        preview_response = staff_client.post(
+            "/resources/products/imports/preview/",
+            {"file": _csv_upload(b"sku,name,price,category\nSTALE-001,Keyboard,99.99,hardware\n")},
+            format="multipart",
+        )
+        job_id = preview_response.json()["id"]
+        assert (
+            staff_client.post(f"/import-jobs/{job_id}/confirm/", format="json").status_code == 202
+        )
+        ImportJob.objects.filter(id=job_id).update(
+            status=ImportJob.Status.PROCESSING,
+            attempt_count=1,
+            started_at=timezone.now() - timedelta(seconds=2),
+        )
+
+        assert recover_stale_import_jobs(limits=get_runtime_settings()) == 1
+        recovered_job = ImportJob.objects.get(id=job_id)
+        assert recovered_job.status == ImportJob.Status.QUEUED
+        assert recovered_job.attempt_count == 1
+
+        call_command("process_import_jobs")
+
+    job_response = staff_client.get(f"/import-jobs/{job_id}/")
+    assert job_response.json()["status"] == ImportJob.Status.COMMITTED
+    assert Product.objects.get(sku="STALE-001").category == category
+
+
+@pytest.mark.django_db
+def test_stale_job_at_retry_limit_is_failed_without_mutating_records(
+    staff_client: APIClient,
+) -> None:
+    Category.objects.create(slug="hardware", name="Hardware")
+    queue_settings = {
+        **FREEHAND_KIT_IMPORT_EXPORT,
+        "PROCESSING_TIMEOUT_SECONDS": 1,
+        "MAX_ATTEMPTS": 2,
+    }
+    with override_settings(FREEHAND_KIT_IMPORT_EXPORT=queue_settings):
+        preview_response = staff_client.post(
+            "/resources/products/imports/preview/",
+            {"file": _csv_upload(b"sku,name,price,category\nNO-RETRY,Keyboard,99.99,hardware\n")},
+            format="multipart",
+        )
+        job = ImportJob.objects.get(id=preview_response.json()["id"])
+        job.status = ImportJob.Status.PROCESSING
+        job.attempt_count = 2
+        job.started_at = timezone.now() - timedelta(seconds=2)
+        job.save(update_fields=("status", "attempt_count", "started_at", "updated_at"))
+
+        assert recover_stale_import_jobs(limits=get_runtime_settings()) == 1
+
+    job.refresh_from_db()
+    assert job.status == ImportJob.Status.FAILED
+    assert job.errors == [{"line": None, "code": "processing_error"}]
+    assert Product.objects.count() == 0

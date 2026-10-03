@@ -33,6 +33,7 @@ class ImportJobSerializer(serializers.ModelSerializer[ImportJob]):
     """Sanitized, owner-visible import job state."""
 
     confirmation_eligible = serializers.SerializerMethodField()
+    progress = serializers.SerializerMethodField()
 
     class Meta:
         model = ImportJob
@@ -44,10 +45,14 @@ class ImportJobSerializer(serializers.ModelSerializer[ImportJob]):
             "status",
             "summary",
             "errors",
+            "progress",
+            "attempt_count",
             "confirmation_eligible",
             "created_at",
             "updated_at",
             "previewed_at",
+            "queued_at",
+            "started_at",
             "committed_at",
             "failed_at",
         )
@@ -55,6 +60,12 @@ class ImportJobSerializer(serializers.ModelSerializer[ImportJob]):
 
     def get_confirmation_eligible(self, job: ImportJob) -> bool:
         return job.status == ImportJob.Status.PREVIEWED
+
+    def get_progress(self, job: ImportJob) -> dict[str, int]:
+        total = job.progress_total
+        completed = min(job.progress_completed, total)
+        percent = 0 if total == 0 else (completed * 100) // total
+        return {"total_rows": total, "completed_rows": completed, "percent": percent}
 
 
 class RecordPageSerializer(serializers.Serializer[dict[str, object]]):

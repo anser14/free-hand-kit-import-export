@@ -3,6 +3,20 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-02
+
+### Added
+
+- Durable database-backed import queue states, attempts, timestamps, and progress counters.
+- Bundled `process_import_jobs` Django management command with stale-job recovery and a
+  bounded retry budget.
+- Owner-scoped, sanitized CSV error-report download endpoint.
+
+### Changed
+
+- Confirmation now returns `202 Accepted` after queuing a successful preview; a worker
+  atomically commits the import and records terminal state.
+
 ## [0.3.0] - 2026-10-02
 
 ### Added

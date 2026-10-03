@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import io
 from dataclasses import dataclass
+from datetime import timedelta
 from uuid import UUID
 
 from django.contrib.auth.models import AbstractBaseUser
@@ -62,10 +63,10 @@ class ImportReport:
 
 @dataclass(frozen=True)
 class ConfirmationResult:
-    """Result of an explicit import confirmation request."""
+    """Result of accepting an explicit import confirmation into the queue."""
 
     job: ImportJob
-    committed: bool
+    accepted: bool
     idempotent: bool = False
 
 
@@ -218,10 +219,10 @@ def _report_from_result(
     )
 
 
-def _processing_failure(parsed: ParsedCSV) -> ImportReport:
+def _processing_failure(*, row_count: int) -> ImportReport:
     return ImportReport(
         summary={
-            "total_rows": parsed.row_count,
+            "total_rows": row_count,
             "error_rows": 1,
             "errors_truncated": False,
         },
@@ -247,24 +248,50 @@ def _run_import(
             rollback_on_validation_errors=True,
         )
     except Exception:
-        return _processing_failure(parsed)
+        return _processing_failure(row_count=parsed.row_count)
     return _report_from_result(result, parsed, limits)
+
+
+def _summary_row_count(summary: dict[str, object]) -> int:
+    value = summary.get("total_rows", 0)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
 def _update_lifecycle(
     job: ImportJob,
-    report: ImportReport,
+    report: ImportReport | None,
     *,
     status: str,
+    progress_total: int | None = None,
+    progress_completed: int | None = None,
 ) -> ImportJob:
     now = timezone.now()
     job.status = status
-    job.summary = report.summary
-    job.errors = report.errors
-    update_fields = ["status", "summary", "errors", "updated_at"]
+    update_fields = ["status", "updated_at"]
+    if report is not None:
+        job.summary = report.summary
+        job.errors = report.errors
+        update_fields.extend(("summary", "errors"))
+        if progress_total is None:
+            progress_total = _summary_row_count(report.summary)
+        if progress_completed is None:
+            progress_completed = progress_total if status == ImportJob.Status.COMMITTED else 0
+    if progress_total is not None:
+        job.progress_total = progress_total
+        update_fields.append("progress_total")
+    if progress_completed is not None:
+        job.progress_completed = progress_completed
+        update_fields.append("progress_completed")
     if status == ImportJob.Status.PREVIEWED:
         job.previewed_at = now
         update_fields.append("previewed_at")
+    if status == ImportJob.Status.QUEUED:
+        job.queued_at = now
+        job.started_at = None
+        update_fields.extend(("queued_at", "started_at"))
+    if status == ImportJob.Status.PROCESSING:
+        job.started_at = now
+        update_fields.append("started_at")
     if status == ImportJob.Status.COMMITTED:
         job.committed_at = now
         update_fields.append("committed_at")
@@ -314,9 +341,8 @@ def confirm_import(
     *,
     job_id: UUID,
     submitted_by: AbstractBaseUser,
-    limits: ImportExportSettings,
 ) -> ConfirmationResult:
-    """Revalidate a previewed source and atomically apply it exactly once."""
+    """Atomically enqueue one successful preview for asynchronous execution."""
 
     with transaction.atomic():
         try:
@@ -328,10 +354,65 @@ def confirm_import(
             raise ImportJobNotFound from exc
 
         if job.status == ImportJob.Status.COMMITTED:
-            return ConfirmationResult(job=job, committed=True, idempotent=True)
+            return ConfirmationResult(job=job, accepted=True, idempotent=True)
+        if job.status in {ImportJob.Status.QUEUED, ImportJob.Status.PROCESSING}:
+            return ConfirmationResult(job=job, accepted=True, idempotent=True)
         if job.status != ImportJob.Status.PREVIEWED:
             raise ImportJobStateError("Only a successful preview can be confirmed.")
 
+        return ConfirmationResult(
+            job=_update_lifecycle(
+                job,
+                None,
+                status=ImportJob.Status.QUEUED,
+                progress_total=_summary_row_count(job.summary),
+                progress_completed=0,
+            ),
+            accepted=True,
+        )
+
+
+def _claim_job(job: ImportJob) -> ImportJob:
+    """Move an exclusively locked queued job into processing state."""
+
+    if job.status != ImportJob.Status.QUEUED:
+        raise ImportJobStateError("Only queued jobs can be processed.")
+    job.attempt_count += 1
+    job.save(update_fields=("attempt_count", "updated_at"))
+    return _update_lifecycle(job, None, status=ImportJob.Status.PROCESSING)
+
+
+def _claim_import_job(job_id: UUID) -> ImportJob | None:
+    with transaction.atomic():
+        try:
+            job = ImportJob.objects.select_for_update().get(id=job_id)
+        except ImportJob.DoesNotExist:
+            return None
+        if job.status != ImportJob.Status.QUEUED:
+            return None
+        return _claim_job(job)
+
+
+def _claim_next_import_job() -> ImportJob | None:
+    with transaction.atomic():
+        job = (
+            ImportJob.objects.select_for_update()
+            .filter(status=ImportJob.Status.QUEUED)
+            .order_by("created_at")
+            .first()
+        )
+        if job is None:
+            return None
+        return _claim_job(job)
+
+
+def _process_claimed_import_job(*, job_id: UUID, limits: ImportExportSettings) -> ImportJob:
+    """Run one claimed job atomically so data and terminal job state agree."""
+
+    with transaction.atomic():
+        job = ImportJob.objects.select_for_update().get(id=job_id)
+        if job.status != ImportJob.Status.PROCESSING:
+            raise ImportJobStateError("Only processing jobs can be finalized.")
         try:
             resource = get_resource(job.resource_key)
             source = _read_stored_source(job, limits)
@@ -339,19 +420,80 @@ def confirm_import(
                 raise ImportPayloadError("The stored source file no longer matches its preview.")
             parsed = _parse_csv(source, resource, limits)
         except (ImportPayloadError, ResourceConfigurationError):
-            report = _processing_failure(ParsedCSV(dataset=Dataset(), row_count=0))
-            return ConfirmationResult(
-                job=_update_lifecycle(job, report, status=ImportJob.Status.FAILED),
-                committed=False,
+            return _update_lifecycle(
+                job,
+                _processing_failure(row_count=job.progress_total),
+                status=ImportJob.Status.FAILED,
+                progress_total=job.progress_total,
+                progress_completed=0,
             )
 
+        if job.progress_total != parsed.row_count:
+            job.progress_total = parsed.row_count
+            job.save(update_fields=("progress_total", "updated_at"))
         report = _run_import(resource, parsed, limits, dry_run=False)
         if not report.can_confirm:
-            return ConfirmationResult(
-                job=_update_lifecycle(job, report, status=ImportJob.Status.FAILED),
-                committed=False,
+            return _update_lifecycle(
+                job,
+                report,
+                status=ImportJob.Status.FAILED,
+                progress_total=parsed.row_count,
+                progress_completed=0,
             )
-        return ConfirmationResult(
-            job=_update_lifecycle(job, report, status=ImportJob.Status.COMMITTED),
-            committed=True,
+        return _update_lifecycle(
+            job,
+            report,
+            status=ImportJob.Status.COMMITTED,
+            progress_total=parsed.row_count,
+            progress_completed=parsed.row_count,
         )
+
+
+def process_import_job(*, job_id: UUID, limits: ImportExportSettings) -> ImportJob | None:
+    """Claim and process one specific queued job; safe to call from task runners."""
+
+    job = _claim_import_job(job_id)
+    if job is None:
+        return None
+    return _process_claimed_import_job(job_id=job.id, limits=limits)
+
+
+def process_next_import_job(*, limits: ImportExportSettings) -> ImportJob | None:
+    """Claim and process the oldest queued job exactly once per worker call."""
+
+    job = _claim_next_import_job()
+    if job is None:
+        return None
+    return _process_claimed_import_job(job_id=job.id, limits=limits)
+
+
+def recover_stale_import_jobs(*, limits: ImportExportSettings) -> int:
+    """Requeue interrupted work or fail it once its bounded retry budget is exhausted."""
+
+    cutoff = timezone.now() - timedelta(seconds=limits.processing_timeout_seconds)
+    recovered = 0
+    with transaction.atomic():
+        jobs = list(
+            ImportJob.objects.select_for_update()
+            .filter(status=ImportJob.Status.PROCESSING, started_at__lt=cutoff)
+            .order_by("started_at")
+        )
+        for job in jobs:
+            if job.attempt_count >= limits.max_attempts:
+                _update_lifecycle(
+                    job,
+                    _processing_failure(row_count=job.progress_total),
+                    status=ImportJob.Status.FAILED,
+                    progress_total=job.progress_total,
+                    progress_completed=0,
+                )
+            else:
+                _update_lifecycle(
+                    job,
+                    None,
+                    status=ImportJob.Status.QUEUED,
+                    progress_total=job.progress_total,
+                    progress_completed=0,
+                )
+            recovered += 1
+    return recovered

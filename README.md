@@ -6,11 +6,10 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.3.0` implements bounded, synchronous,
-> two-phase CSV import plus configured records and spreadsheet-safe CSV export. It is
-> not published and is not yet a stable production release: queryset/tenant scoping,
-> configurable per-resource permissions, background jobs, and retention operations
-> remain to be implemented.
+> **Status: pre-release.** Version `0.4.0` implements bounded, queued CSV import,
+> configured records, spreadsheet-safe CSV export, progress state, and sanitized error
+> reports. It is not published and is not yet a stable production release: queryset/
+> tenant scoping, configurable per-resource permissions, and retention operations remain.
 
 ## Design promise
 
@@ -55,7 +54,16 @@ Run `python manage.py migrate`, then visit `/api/data/docs/`. Staff users can do
 the template, submit `POST /api/data/resources/products/imports/preview/` as multipart
 form data with a `file` field, review the returned job, and explicitly call
 `POST /api/data/import-jobs/{id}/confirm/`. A preview is dry-run only; confirmation
-revalidates the stored source and applies it atomically.
+returns `202 Accepted` after adding the job to the durable database queue. Run a worker
+under your process supervisor or scheduler:
+
+```bash
+python manage.py process_import_jobs --max-jobs 10
+```
+
+The worker revalidates the stored source and atomically applies the import. Poll
+`GET /api/data/import-jobs/{id}/` for queue state and progress, or download its
+sanitized failure metadata from `GET /api/data/import-jobs/{id}/errors/`.
 
 Staff users can also use `GET /api/data/resources/products/records/` for paginated JSON
 and `GET /api/data/resources/products/export/` for bounded CSV. Both accept only
@@ -71,7 +79,8 @@ cells that could be interpreted as spreadsheet formulae are prefixed safely.
 - Related objects are never auto-created by default.
 - Uploads are UTF-8 CSV only, with exact configured headers, size/row limits, and no
   blank rows. Persisted errors contain line numbers and codes—not uploaded cell values.
-- Preview and confirmation use transactions; confirmation is retry-safe after success.
+- Preview and worker execution use transactions; queue confirmation is retry-safe and
+  worker retries are bounded.
 - CSV exports are capped and spreadsheet-formula-safe. Queryset scoping and configurable
   authorization are still mandatory before the first stable release.
 

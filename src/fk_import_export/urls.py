@@ -6,6 +6,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from .api.views import (
     ImportConfirmView,
     ImportJobDetailView,
+    ImportJobErrorsView,
     ImportPreviewView,
     ResourceExportView,
     ResourceListView,
@@ -40,6 +41,11 @@ urlpatterns = [
         name="resource-export",
     ),
     path("import-jobs/<uuid:job_id>/", ImportJobDetailView.as_view(), name="import-job-detail"),
+    path(
+        "import-jobs/<uuid:job_id>/errors/",
+        ImportJobErrorsView.as_view(),
+        name="import-job-errors",
+    ),
     path(
         "import-jobs/<uuid:job_id>/confirm/",
         ImportConfirmView.as_view(),
