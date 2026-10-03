@@ -13,8 +13,10 @@ never include uploaded cell values or raw database exception text. The downloada
 report applies the same contract and is owner-scoped.
 
 Source files can contain sensitive data. Use a private storage backend, deny direct
-media access, encrypt storage where appropriate, and define a retention/deletion job.
-The package cannot make an application's selected Django storage private by itself.
+media access, and encrypt storage where appropriate. Configure
+`SOURCE_RETENTION_DAYS` and/or `JOB_RETENTION_DAYS`, review `purge_import_jobs` in
+dry-run mode, then schedule it with `--apply`. It considers only terminal jobs and
+cannot make an application's selected Django storage private by itself.
 
 CSV output intended for spreadsheets requires formula-injection handling. A value
 that begins with formula-trigger characters must not be exported naively as a cell.

@@ -45,6 +45,7 @@ class ImportJob(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     committed_at = models.DateTimeField(null=True, blank=True)
     failed_at = models.DateTimeField(null=True, blank=True)
+    source_deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ("-created_at",)

@@ -23,6 +23,8 @@ DEFAULT_MAX_PAGE_SIZE = 500
 DEFAULT_MAX_EXPORT_ROWS = 10_000
 DEFAULT_PROCESSING_TIMEOUT_SECONDS = 60 * 60
 DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_SOURCE_RETENTION_DAYS: int | None = None
+DEFAULT_JOB_RETENTION_DAYS: int | None = None
 SENSITIVE_FIELD_NAMES = frozenset(
     {
         "password",
@@ -63,6 +65,8 @@ ALLOWED_SETTING_KEYS = frozenset(
         "MAX_EXPORT_ROWS",
         "PROCESSING_TIMEOUT_SECONDS",
         "MAX_ATTEMPTS",
+        "SOURCE_RETENTION_DAYS",
+        "JOB_RETENTION_DAYS",
     }
 )
 
@@ -108,6 +112,8 @@ class ImportExportSettings:
     max_export_rows: int
     processing_timeout_seconds: int
     max_attempts: int
+    source_retention_days: int | None
+    job_retention_days: int | None
 
 
 @dataclass(frozen=True)
@@ -368,6 +374,18 @@ def _positive_int(value: Any, *, setting_key: str, default: int) -> int:
     return value
 
 
+def _optional_positive_int(value: Any, *, setting_key: str, default: int | None) -> int | None:
+    """Validate an optional retention period without enabling deletion by default."""
+
+    if value is None:
+        return default
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise ResourceConfigurationError(
+            f"{SETTING_NAME}['{setting_key}'] must be a positive integer or None."
+        )
+    return value
+
+
 def get_runtime_settings() -> ImportExportSettings:
     """Return validated operational limits for this package instance."""
 
@@ -414,6 +432,16 @@ def get_runtime_settings() -> ImportExportSettings:
             raw_settings.get("MAX_ATTEMPTS"),
             setting_key="MAX_ATTEMPTS",
             default=DEFAULT_MAX_ATTEMPTS,
+        ),
+        source_retention_days=_optional_positive_int(
+            raw_settings.get("SOURCE_RETENTION_DAYS"),
+            setting_key="SOURCE_RETENTION_DAYS",
+            default=DEFAULT_SOURCE_RETENTION_DAYS,
+        ),
+        job_retention_days=_optional_positive_int(
+            raw_settings.get("JOB_RETENTION_DAYS"),
+            setting_key="JOB_RETENTION_DAYS",
+            default=DEFAULT_JOB_RETENTION_DAYS,
         ),
     )
 

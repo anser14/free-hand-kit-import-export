@@ -5,5 +5,6 @@ identifiers, invalid cells, unauthorized callers, owner isolation, source tamper
 row and byte limits, relationship filters, pagination, CSV formula values, export
 limits, queue confirmation idempotency, worker completion, stale-job recovery,
 retry exhaustion, sanitized error reports, tenant/queryset scopes, and a replay of the
-same confirmation. Package CI must validate the OpenAPI schema and both wheel and source
-distribution.
+same confirmation. Also test configured retention with a dry run, source-only deletion,
+full terminal-job deletion, storage failure handling, and protection of nonterminal
+jobs. Package CI must validate the OpenAPI schema and both wheel and source distribution.

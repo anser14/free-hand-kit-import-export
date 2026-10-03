@@ -28,5 +28,25 @@ commit) rather than misleading per-row progress.
 
 The implementation remains bounded by `MAX_UPLOAD_BYTES`, `MAX_ROWS`, and
 `MAX_EXPORT_ROWS`. Record listing uses bounded page sizes; full CSV export rejects
-result sets over the configured export limit. Operations must still define source-file
-retention, deletion, failed-job alerting, and durable private storage.
+result sets over the configured export limit.
+
+## Retention cleanup
+
+Set `SOURCE_RETENTION_DAYS` and/or `JOB_RETENTION_DAYS` in the package setting to opt
+into terminal-data retention. Both settings default to `None`; no source file or job is
+deleted merely by installing the package. A source-only policy keeps its audit record and
+sets `source_deleted_at`. A job-retention policy deletes both the terminal job and its
+remaining storage object.
+
+Run this command from your scheduler after first reviewing its dry-run output:
+
+```bash
+python manage.py purge_import_jobs --batch-size 100
+python manage.py purge_import_jobs --batch-size 100 --apply
+```
+
+Use `--sources` or `--jobs` to operate on one category only. The command never selects
+uploaded, previewed, queued, or processing jobs, and no deletion occurs without
+`--apply`. Storage failures leave the matching record intact and are reported as a
+failure count; investigate and rerun after repairing storage access. Schedule this with
+a service identity that has access to the private Django storage backend.

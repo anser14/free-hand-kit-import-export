@@ -12,6 +12,8 @@ FREEHAND_KIT_IMPORT_EXPORT = {
     "MAX_EXPORT_ROWS": 10_000,
     "PROCESSING_TIMEOUT_SECONDS": 60 * 60,
     "MAX_ATTEMPTS": 3,
+    "SOURCE_RETENTION_DAYS": 7,
+    "JOB_RETENTION_DAYS": 90,
     "RESOURCES": {
         "products": {
             "MODEL": "inventory.Product",
@@ -51,6 +53,13 @@ into the import engine. Relation names must be declared in import or export fiel
 `processing` job stale. `MAX_ATTEMPTS` caps recovery retries; a stale job at the cap is
 marked failed with a sanitized processing error. Set both values from realistic worker
 timeouts and the maximum execution time of your largest permitted upload.
+
+`SOURCE_RETENTION_DAYS` and `JOB_RETENTION_DAYS` are optional positive integers; both
+default to `None`, which disables their respective deletion policy. Source retention
+removes only the stored CSV from old committed or failed jobs while preserving the
+sanitized audit record. Job retention deletes old committed or failed jobs and any
+remaining stored source. Choose periods that satisfy your application's privacy,
+support, and legal retention requirements; the package never selects a policy for you.
 
 `PERMISSIONS` declares all requirements for `READ`, `EXPORT`, and `IMPORT`. A value can
 be a Django permission codename (`"app_label.codename"`) or a list/tuple of codenames

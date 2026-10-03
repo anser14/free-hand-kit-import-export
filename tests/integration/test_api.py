@@ -1,6 +1,7 @@
 import csv
 import io
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -563,3 +564,135 @@ def test_stale_job_at_retry_limit_is_failed_without_mutating_records(
     assert job.status == ImportJob.Status.FAILED
     assert job.errors == [{"line": None, "code": "processing_error"}]
     assert Product.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_retention_dry_run_then_removes_only_expired_terminal_data(
+    staff_client: APIClient,
+) -> None:
+    Category.objects.create(slug="hardware", name="Hardware")
+    preview_response = staff_client.post(
+        "/resources/products/imports/preview/",
+        {"file": _csv_upload(b"sku,name,price,category\nEXPIRE-001,Keyboard,99.99,hardware\n")},
+        format="multipart",
+    )
+    job_id = preview_response.json()["id"]
+    assert staff_client.post(f"/import-jobs/{job_id}/confirm/", format="json").status_code == 202
+    call_command("process_import_jobs")
+
+    job = ImportJob.objects.get(id=job_id)
+    source_name = job.source_file.name
+    old_timestamp = timezone.now() - timedelta(days=3)
+    ImportJob.objects.filter(id=job.id).update(
+        committed_at=old_timestamp,
+        updated_at=old_timestamp,
+    )
+    retention_settings = {
+        **FREEHAND_KIT_IMPORT_EXPORT,
+        "SOURCE_RETENTION_DAYS": 1,
+        "JOB_RETENTION_DAYS": 2,
+    }
+
+    with override_settings(FREEHAND_KIT_IMPORT_EXPORT=retention_settings):
+        call_command("purge_import_jobs", "--sources")
+        job.refresh_from_db()
+        assert job.source_file.name == source_name
+        assert job.source_file.storage.exists(source_name)
+
+        call_command("purge_import_jobs", "--sources", "--apply")
+        job.refresh_from_db()
+        assert job.source_file.name == ""
+        assert job.source_deleted_at is not None
+        assert not job.source_file.storage.exists(source_name)
+
+        call_command("purge_import_jobs", "--jobs", "--apply")
+
+    assert not ImportJob.objects.filter(id=job_id).exists()
+
+
+@pytest.mark.django_db
+def test_retention_never_deletes_nonterminal_previewed_jobs(staff_client: APIClient) -> None:
+    Category.objects.create(slug="hardware", name="Hardware")
+    preview_response = staff_client.post(
+        "/resources/products/imports/preview/",
+        {"file": _csv_upload(b"sku,name,price,category\nPENDING-001,Keyboard,99.99,hardware\n")},
+        format="multipart",
+    )
+    job = ImportJob.objects.get(id=preview_response.json()["id"])
+    source_name = job.source_file.name
+    ImportJob.objects.filter(id=job.id).update(updated_at=timezone.now() - timedelta(days=10))
+    retention_settings = {
+        **FREEHAND_KIT_IMPORT_EXPORT,
+        "SOURCE_RETENTION_DAYS": 1,
+        "JOB_RETENTION_DAYS": 1,
+    }
+
+    with override_settings(FREEHAND_KIT_IMPORT_EXPORT=retention_settings):
+        call_command("purge_import_jobs", "--apply")
+
+    job.refresh_from_db()
+    assert job.status == ImportJob.Status.PREVIEWED
+    assert job.source_file.name == source_name
+    assert job.source_file.storage.exists(source_name)
+
+
+@pytest.mark.django_db
+def test_job_retention_removes_its_remaining_source_file(staff_client: APIClient) -> None:
+    failed_preview = staff_client.post(
+        "/resources/products/imports/preview/",
+        {
+            "file": _csv_upload(
+                b"sku,name,price,category\nEXPIRED-FAILURE,Keyboard,99.99,missing-category\n"
+            )
+        },
+        format="multipart",
+    )
+    job = ImportJob.objects.get(id=failed_preview.json()["id"])
+    source_name = job.source_file.name
+    old_timestamp = timezone.now() - timedelta(days=3)
+    ImportJob.objects.filter(id=job.id).update(
+        failed_at=old_timestamp,
+        updated_at=old_timestamp,
+    )
+
+    with override_settings(
+        FREEHAND_KIT_IMPORT_EXPORT={
+            **FREEHAND_KIT_IMPORT_EXPORT,
+            "JOB_RETENTION_DAYS": 1,
+        }
+    ):
+        call_command("purge_import_jobs", "--jobs", "--apply")
+
+    assert not ImportJob.objects.filter(id=job.id).exists()
+    assert not job.source_file.storage.exists(source_name)
+
+
+@pytest.mark.django_db
+def test_source_retention_keeps_audit_record_when_storage_deletion_fails(
+    staff_client: APIClient,
+) -> None:
+    Category.objects.create(slug="hardware", name="Hardware")
+    preview_response = staff_client.post(
+        "/resources/products/imports/preview/",
+        {"file": _csv_upload(b"sku,name,price,category\nSTORAGE-001,Keyboard,99.99,hardware\n")},
+        format="multipart",
+    )
+    job = ImportJob.objects.get(id=preview_response.json()["id"])
+    old_timestamp = timezone.now() - timedelta(days=3)
+    ImportJob.objects.filter(id=job.id).update(
+        status=ImportJob.Status.FAILED,
+        failed_at=old_timestamp,
+        updated_at=old_timestamp,
+    )
+
+    with override_settings(
+        FREEHAND_KIT_IMPORT_EXPORT={
+            **FREEHAND_KIT_IMPORT_EXPORT,
+            "SOURCE_RETENTION_DAYS": 1,
+        }
+    ), patch("django.db.models.fields.files.FieldFile.delete", side_effect=OSError):
+        call_command("purge_import_jobs", "--sources", "--apply")
+
+    job.refresh_from_db()
+    assert job.source_file.name
+    assert job.source_deleted_at is None

@@ -3,6 +3,18 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-10-03
+
+### Added
+
+- Opt-in retention settings and a bounded `purge_import_jobs` management command.
+- Source-deletion audit timestamps on retained terminal import-job records.
+
+### Security
+
+- Retention processing considers only committed and failed jobs, defaults to dry-run,
+  and requires `--apply` before any source object or job record is removed.
+
 ## [0.5.0] - 2026-10-03
 
 ### Added

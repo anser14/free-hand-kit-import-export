@@ -6,11 +6,11 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.5.0` implements bounded, queued CSV import,
+> **Status: pre-release.** Version `0.6.0` implements bounded, queued CSV import,
 > configured records, spreadsheet-safe CSV export, direct tenant/owner scopes, permission
-> policies, progress state, and sanitized error reports. It is not published and is not
-> yet a stable production release: retention operations and application-specific complex
-> authorization policies remain.
+> policies, progress state, sanitized error reports, and opt-in terminal-job retention.
+> It is not published and is not yet a stable production release: application-specific
+> complex authorization policies remain.
 
 ## Design promise
 
@@ -66,6 +66,14 @@ under your process supervisor or scheduler:
 
 ```bash
 python manage.py process_import_jobs --max-jobs 10
+```
+
+Configure a retention period for private CSV source files and completed audit jobs, then
+review a dry run before enabling deletion:
+
+```bash
+python manage.py purge_import_jobs
+python manage.py purge_import_jobs --apply
 ```
 
 The worker revalidates the stored source and atomically applies the import. Poll

@@ -76,6 +76,18 @@ def test_non_positive_operational_limit_is_reported_by_system_check() -> None:
     assert issues[0].id == "fk_import_export.E001"
 
 
+def test_retention_period_must_be_positive_or_disabled() -> None:
+    with override_settings(
+        FREEHAND_KIT_IMPORT_EXPORT={
+            "SOURCE_RETENTION_DAYS": 0,
+            "RESOURCES": {},
+        }
+    ):
+        issues = configuration_issues()
+
+    assert issues[0].id == "fk_import_export.E001"
+
+
 def test_relation_fields_require_an_explicit_lookup_configuration() -> None:
     with override_settings(
         FREEHAND_KIT_IMPORT_EXPORT={

@@ -14,6 +14,7 @@ from django.contrib.auth.models import AbstractBaseUser
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from import_export.results import Result
 from tablib import Dataset  # type: ignore[import-untyped]
@@ -69,6 +70,18 @@ class ConfirmationResult:
     job: ImportJob
     accepted: bool
     idempotent: bool = False
+
+
+@dataclass(frozen=True)
+class RetentionReport:
+    """Outcome of one bounded, operator-controlled retention cleanup invocation."""
+
+    source_candidates: int = 0
+    sources_deleted: int = 0
+    source_delete_failures: int = 0
+    job_candidates: int = 0
+    jobs_deleted: int = 0
+    job_delete_failures: int = 0
 
 
 def _safe_filename(name: str) -> str:
@@ -521,3 +534,142 @@ def recover_stale_import_jobs(*, limits: ImportExportSettings) -> int:
                 )
             recovered += 1
     return recovered
+
+
+def _expired_terminal_job_ids(
+    *, retention_days: int, batch_size: int, with_source: bool = False
+) -> list[UUID]:
+    """Select a bounded set of terminal jobs eligible for retention cleanup."""
+
+    cutoff = timezone.now() - timedelta(days=retention_days)
+    terminal_statuses = (ImportJob.Status.COMMITTED, ImportJob.Status.FAILED)
+    terminal_timestamp_before_cutoff = (
+        Q(status=ImportJob.Status.COMMITTED, committed_at__lt=cutoff)
+        | Q(status=ImportJob.Status.FAILED, failed_at__lt=cutoff)
+        | Q(
+            status__in=terminal_statuses,
+            committed_at__isnull=True,
+            failed_at__isnull=True,
+            updated_at__lt=cutoff,
+        )
+    )
+    jobs = ImportJob.objects.filter(terminal_timestamp_before_cutoff)
+    if with_source:
+        jobs = jobs.filter(source_deleted_at__isnull=True).exclude(source_file="")
+    return list(jobs.order_by("created_at").values_list("id", flat=True)[:batch_size])
+
+
+def _delete_source_from_storage(job: ImportJob) -> bool:
+    """Delete a job's source object without exposing its storage path to callers."""
+
+    if not job.source_file.name:
+        return True
+    try:
+        job.source_file.delete(save=False)
+    except Exception:
+        # Storage backends can raise provider-specific exceptions. Do not remove the
+        # database evidence when the underlying private object could not be removed.
+        return False
+    job.source_file = ""
+    return True
+
+
+def _expire_source(*, job_id: UUID) -> bool:
+    """Remove one terminal job's source and retain an auditable job record."""
+
+    with transaction.atomic():
+        try:
+            job = ImportJob.objects.select_for_update().get(id=job_id)
+        except ImportJob.DoesNotExist:
+            return False
+        if (
+            job.status not in {ImportJob.Status.COMMITTED, ImportJob.Status.FAILED}
+            or job.source_deleted_at is not None
+            or not job.source_file.name
+        ):
+            return False
+        if not _delete_source_from_storage(job):
+            return False
+        job.source_deleted_at = timezone.now()
+        job.save(update_fields=("source_file", "source_deleted_at", "updated_at"))
+    return True
+
+
+def _purge_job(*, job_id: UUID) -> bool:
+    """Delete one expired terminal job, removing its source object first when present."""
+
+    with transaction.atomic():
+        try:
+            job = ImportJob.objects.select_for_update().get(id=job_id)
+        except ImportJob.DoesNotExist:
+            return False
+        if job.status not in {ImportJob.Status.COMMITTED, ImportJob.Status.FAILED}:
+            return False
+        if not _delete_source_from_storage(job):
+            return False
+        job.delete()
+    return True
+
+
+def purge_expired_import_data(
+    *,
+    limits: ImportExportSettings,
+    apply: bool,
+    include_sources: bool = True,
+    include_jobs: bool = True,
+    batch_size: int = 100,
+) -> RetentionReport:
+    """Safely report or remove bounded terminal import data based on configured retention.
+
+    The caller must pass ``apply=True`` to make an irreversible storage or database
+    change. Pending, previewed, queued, and processing jobs are intentionally excluded.
+    """
+
+    if batch_size < 1:
+        raise ValueError("batch_size must be a positive integer.")
+
+    source_ids: list[UUID] = []
+    if include_sources and limits.source_retention_days is not None:
+        source_ids = _expired_terminal_job_ids(
+            retention_days=limits.source_retention_days,
+            batch_size=batch_size,
+            with_source=True,
+        )
+
+    job_ids: list[UUID] = []
+    if include_jobs and limits.job_retention_days is not None:
+        job_ids = _expired_terminal_job_ids(
+            retention_days=limits.job_retention_days,
+            batch_size=batch_size,
+        )
+
+    if not apply:
+        return RetentionReport(
+            source_candidates=len(source_ids),
+            job_candidates=len(job_ids),
+        )
+
+    sources_deleted = 0
+    source_delete_failures = 0
+    for job_id in source_ids:
+        if _expire_source(job_id=job_id):
+            sources_deleted += 1
+        else:
+            source_delete_failures += 1
+
+    jobs_deleted = 0
+    job_delete_failures = 0
+    for job_id in job_ids:
+        if _purge_job(job_id=job_id):
+            jobs_deleted += 1
+        else:
+            job_delete_failures += 1
+
+    return RetentionReport(
+        source_candidates=len(source_ids),
+        sources_deleted=sources_deleted,
+        source_delete_failures=source_delete_failures,
+        job_candidates=len(job_ids),
+        jobs_deleted=jobs_deleted,
+        job_delete_failures=job_delete_failures,
+    )
