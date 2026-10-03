@@ -3,6 +3,19 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-10-03
+
+### Added
+
+- Optional, typed host `ResourcePolicy` classes for indirect tenancy, memberships, and
+  other domain-specific queryset and import-instance rules.
+
+### Security
+
+- Policy classes must be an explicitly configured, zero-argument subclass of the public
+  `ResourcePolicy` base class. They compose with—not replace—resource permissions,
+  field allowlists, and direct scopes.
+
 ## [0.7.0] - 2026-10-03
 
 ### Added

@@ -52,6 +52,7 @@ ALLOWED_RESOURCE_KEYS = frozenset(
         "RELATIONS",
         "PERMISSIONS",
         "SCOPE",
+        "POLICY",
     }
 )
 ALLOWED_SETTING_KEYS = frozenset(
@@ -131,6 +132,7 @@ class ResourceConfig:
     relations: dict[str, RelationConfig]
     permissions: PermissionConfig
     scope: ScopeConfig | None
+    policy_path: str | None
 
     def model(self) -> type[Model]:
         """Resolve the host model only after Django's registry is ready."""
@@ -272,6 +274,22 @@ def _scope_config(value: Any, *, key: str) -> ScopeConfig | None:
     return ScopeConfig(model_field=model_field, user_attribute=user_attribute)
 
 
+def _policy_path(value: Any, *, key: str) -> str | None:
+    """Validate a trusted host policy import path without importing it during parsing."""
+
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or value.count(".") < 1
+        or any(not component.isidentifier() for component in value.split("."))
+    ):
+        raise ResourceConfigurationError(
+            f"Resource '{key}' POLICY must be a dotted Python class import path."
+        )
+    return value
+
+
 def _resource_config(key: str, raw_resource: Any) -> ResourceConfig:
     if (
         not isinstance(key, str)
@@ -321,6 +339,7 @@ def _resource_config(key: str, raw_resource: Any) -> ResourceConfig:
     relations = _relation_config(raw_resource.get("RELATIONS"), key=key)
     permissions = _permission_config(raw_resource.get("PERMISSIONS"), key=key)
     scope = _scope_config(raw_resource.get("SCOPE"), key=key)
+    policy_path = _policy_path(raw_resource.get("POLICY"), key=key)
     declared_fields = set(import_fields) | set(export_fields)
     undeclared_relations = set(relations) - declared_fields
     if undeclared_relations:
@@ -347,6 +366,7 @@ def _resource_config(key: str, raw_resource: Any) -> ResourceConfig:
         relations=relations,
         permissions=permissions,
         scope=scope,
+        policy_path=policy_path,
     )
 
 
@@ -646,9 +666,12 @@ def configuration_issues() -> list[Error]:
     issues: list[Error] = []
     if not apps.ready:
         return issues
+    from .policies import policy_configuration_issues
+
     for resource in resources.values():
         try:
             issues.extend(_validate_model_fields(resource))
+            issues.extend(policy_configuration_issues(resource))
         except ResourceConfigurationError as exc:
             issues.append(Error(str(exc), id="fk_import_export.E010"))
         except LookupError:

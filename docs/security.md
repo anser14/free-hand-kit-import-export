@@ -27,8 +27,10 @@ default; a future raw machine-to-machine policy must remain opt-in and explicit.
 Treat uploaded datasets as sensitive. Do not log their contents or expose another
 user's import job, error report, or original file.
 
-Before a stable release, validate every application's tenant/queryset and permission
-configuration in its own deployment. The package provides a safe direct scope and Django
-permission-policy baseline, but it cannot infer membership graphs, indirect tenancy, or
-other application-specific domain rules. Keep those policies explicit and test them
-separately.
+Validate every application's tenant/queryset and permission configuration in its own
+deployment. For membership graphs, indirect tenancy, or other domain rules, use a tested
+host `ResourcePolicy` class. A policy is trusted application code: keep its constructor
+side-effect-free, return only the configured model queryset, validate every imported
+instance, and test it with real users and worker execution. The package still enforces
+resource permissions, direct scopes, field allowlists, and private job ownership around
+that extension point.

@@ -142,3 +142,20 @@ def test_scope_requires_a_real_direct_user_field() -> None:
         issues = configuration_issues()
 
     assert any(issue.id == "fk_import_export.E022" for issue in issues)
+
+
+def test_policy_must_import_a_resource_policy_subclass() -> None:
+    with override_settings(
+        FREEHAND_KIT_IMPORT_EXPORT={
+            "RESOURCES": {
+                "products": {
+                    "MODEL": "fk_import_export_test_app.Product",
+                    "EXPORT_FIELDS": ("sku",),
+                    "POLICY": "tests.test_app.policies.NotAPolicy",
+                }
+            }
+        }
+    ):
+        issues = configuration_issues()
+
+    assert any(issue.id == "fk_import_export.E023" for issue in issues)

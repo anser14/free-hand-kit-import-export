@@ -4,16 +4,21 @@ from __future__ import annotations
 
 from typing import cast
 
+from django.contrib.auth.models import AbstractBaseUser
 from django.db.models import Field, Model
 from import_export import fields, resources
 from import_export.widgets import ForeignKeyWidget, ManyToManyWidget, Widget
 
 from .conf import ResourceConfig, ResourceConfigurationError
-from .policies import ResolvedScope
+from .policies import ResolvedScope, ResourcePolicy, apply_import_policy
 
 
 def resource_class(
-    config: ResourceConfig, *, scope: ResolvedScope | None = None
+    config: ResourceConfig,
+    *,
+    scope: ResolvedScope | None = None,
+    policy: ResourcePolicy | None = None,
+    user: AbstractBaseUser | None = None,
 ) -> type[resources.ModelResource[Model]]:
     """Build a configured ``ModelResource`` without host boilerplate classes.
 
@@ -37,13 +42,34 @@ def resource_class(
     )
     attributes: dict[str, object] = {"Meta": meta}
 
-    if scope is not None:
+    policy_user: AbstractBaseUser | None = None
+    if policy is not None:
+        if not isinstance(user, AbstractBaseUser):
+            raise ResourceConfigurationError(
+                f"Resource '{config.key}' POLICY requires an authenticated user."
+            )
+        policy_user = user
+
+    if scope is not None or policy is not None:
 
         def get_queryset(self):  # type: ignore[no-untyped-def]
-            return super(type(self), self).get_queryset().filter(**{scope.model_field: scope.value})
+            queryset = super(type(self), self).get_queryset()
+            if scope is not None:
+                queryset = queryset.filter(**{scope.model_field: scope.value})
+            if policy is not None and policy_user is not None:
+                queryset = apply_import_policy(
+                    policy=policy,
+                    resource=config,
+                    queryset=queryset,
+                    user=policy_user,
+                )
+            return queryset
 
         def before_save_instance(self, instance, row, **kwargs):  # type: ignore[no-untyped-def]
-            setattr(instance, scope.model_field, scope.value)
+            if scope is not None:
+                setattr(instance, scope.model_field, scope.value)
+            if policy is not None and policy_user is not None:
+                policy.prepare_instance(instance=instance, user=policy_user)
 
         attributes["get_queryset"] = get_queryset
         attributes["before_save_instance"] = before_save_instance

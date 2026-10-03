@@ -11,7 +11,7 @@ from django.core.exceptions import FieldDoesNotExist, ValidationError
 from django.db.models import Field, Model, Q, QuerySet
 from django.http import QueryDict
 
-from .conf import ImportExportSettings, ResourceConfig
+from .conf import ImportExportSettings, ResourceConfig, ResourceConfigurationError
 from .policies import ScopeResolutionError, scoped_queryset
 from .registry import resource_class
 
@@ -88,12 +88,18 @@ def _validate_query_parameters(query_params: QueryDict) -> None:
 
 
 def _optimized_queryset(
-    resource: ResourceConfig, submitted_by: AbstractBaseUser
+    resource: ResourceConfig, submitted_by: AbstractBaseUser, operation: str
 ) -> QuerySet[Model]:
     try:
-        queryset, _ = scoped_queryset(resource=resource, user=submitted_by)
+        queryset, _, _ = scoped_queryset(
+            resource=resource,
+            user=submitted_by,
+            operation=operation,
+        )
     except ScopeResolutionError as exc:
         raise ResourceQueryError("The current user cannot resolve this resource's scope.") from exc
+    except ResourceConfigurationError as exc:
+        raise ResourceQueryError("This resource's access policy is unavailable.") from exc
     select_related_fields: list[str] = []
     prefetch_related_fields: list[str] = []
     for relation_name in resource.relations:
@@ -113,9 +119,10 @@ def _filtered_queryset(
     resource: ResourceConfig,
     query_params: QueryDict,
     submitted_by: AbstractBaseUser,
+    operation: str,
 ) -> QuerySet[Model]:
     _validate_query_parameters(query_params)
-    queryset = _optimized_queryset(resource, submitted_by)
+    queryset = _optimized_queryset(resource, submitted_by, operation)
     requires_distinct = False
 
     for key, values in query_params.lists():
@@ -155,8 +162,9 @@ def _ordered_queryset(
     resource: ResourceConfig,
     query_params: QueryDict,
     submitted_by: AbstractBaseUser,
+    operation: str,
 ) -> QuerySet[Model]:
-    queryset = _filtered_queryset(resource, query_params, submitted_by)
+    queryset = _filtered_queryset(resource, query_params, submitted_by, operation)
     raw_ordering = query_params.get("ordering")
     if not raw_ordering:
         return queryset.order_by(resource.model()._meta.pk.name)
@@ -213,7 +221,7 @@ def record_page(
         default=limits.page_size,
         maximum=limits.max_page_size,
     )
-    queryset = _ordered_queryset(resource, query_params, submitted_by)
+    queryset = _ordered_queryset(resource, query_params, submitted_by, operation="READ")
     count = queryset.count()
     records = list(queryset[(page - 1) * page_size : page * page_size])
     headers, rows = _export_rows(resource, records)
@@ -243,7 +251,7 @@ def csv_export(
 
     if "page" in query_params or "page_size" in query_params:
         raise ResourceQueryError("Pagination parameters are not supported for CSV export.")
-    queryset = _ordered_queryset(resource, query_params, submitted_by)
+    queryset = _ordered_queryset(resource, query_params, submitted_by, operation="EXPORT")
     records = list(queryset[: limits.max_export_rows + 1])
     if len(records) > limits.max_export_rows:
         raise ExportLimitError(

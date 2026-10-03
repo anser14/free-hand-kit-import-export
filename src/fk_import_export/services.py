@@ -21,7 +21,7 @@ from tablib import Dataset  # type: ignore[import-untyped]
 
 from .conf import ImportExportSettings, ResourceConfig, ResourceConfigurationError, get_resource
 from .models import ImportJob
-from .policies import resolve_scope
+from .policies import get_resource_policy, resolve_scope
 from .registry import resource_class
 from .signals import send_lifecycle_signal
 
@@ -256,7 +256,9 @@ def _run_import(
 ) -> ImportReport:
     try:
         scope = resolve_scope(scope=resource.scope, user=submitted_by)
-        result = resource_class(resource, scope=scope)().import_data(
+        policy = get_resource_policy(resource)
+        engine = resource_class(resource, scope=scope, policy=policy, user=submitted_by)()
+        result = engine.import_data(
             parsed.dataset,
             dry_run=dry_run,
             raise_errors=False,

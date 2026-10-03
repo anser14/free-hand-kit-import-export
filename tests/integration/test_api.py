@@ -312,6 +312,79 @@ def test_direct_owner_scope_applies_to_records_exports_and_imports() -> None:
     assert Product.objects.get(sku="OTHER-001").owner_id == other_owner.id
 
 
+@pytest.mark.django_db
+def test_custom_policy_composes_with_resource_reads_exports_and_imports(
+    staff_client: APIClient,
+) -> None:
+    category = Category.objects.create(slug="hardware", name="Hardware")
+    Product.objects.create(
+        sku="APPROVED-EXISTING",
+        name="Visible product",
+        price="10.00",
+        category=category,
+    )
+    Product.objects.create(
+        sku="BLOCKED-EXISTING",
+        name="Hidden product",
+        price="20.00",
+        category=category,
+    )
+    policy_settings = {
+        **FREEHAND_KIT_IMPORT_EXPORT,
+        "RESOURCES": {
+            "products": {
+                **FREEHAND_KIT_IMPORT_EXPORT["RESOURCES"]["products"],
+                "POLICY": "tests.test_app.policies.ApprovedSkuPolicy",
+            }
+        },
+    }
+
+    with override_settings(FREEHAND_KIT_IMPORT_EXPORT=policy_settings):
+        records_response = staff_client.get("/resources/products/records/?ordering=sku")
+        export_response = staff_client.get("/resources/products/export/?ordering=sku")
+        blocked_preview = staff_client.post(
+            "/resources/products/imports/preview/",
+            {
+                "file": _csv_upload(
+                    b"sku,name,price,category\nBLOCKED-NEW,Keyboard,99.99,hardware\n"
+                )
+            },
+            format="multipart",
+        )
+        allowed_preview = staff_client.post(
+            "/resources/products/imports/preview/",
+            {
+                "file": _csv_upload(
+                    b"sku,name,price,category\nAPPROVED-NEW,Keyboard,99.99,hardware\n"
+                )
+            },
+            format="multipart",
+        )
+        allowed_job_id = allowed_preview.json()["id"]
+        assert (
+            staff_client.post(f"/import-jobs/{allowed_job_id}/confirm/", format="json").status_code
+            == 202
+        )
+        call_command("process_import_jobs")
+
+    assert records_response.status_code == 200
+    assert records_response.json()["results"] == [
+        {
+            "sku": "APPROVED-EXISTING",
+            "name": "Visible product",
+            "price": "10.00",
+            "category": "hardware",
+        }
+    ]
+    assert b"APPROVED-EXISTING" in export_response.content
+    assert b"BLOCKED-EXISTING" not in export_response.content
+    assert blocked_preview.status_code == 201
+    assert blocked_preview.json()["status"] == ImportJob.Status.FAILED
+    assert allowed_preview.json()["status"] == ImportJob.Status.PREVIEWED
+    assert Product.objects.filter(sku="BLOCKED-NEW").exists() is False
+    assert Product.objects.filter(sku="APPROVED-NEW").exists() is True
+
+
 def _csv_upload(content: bytes, name: str = "products.csv") -> SimpleUploadedFile:
     return SimpleUploadedFile(name, content, content_type="text/csv")
 

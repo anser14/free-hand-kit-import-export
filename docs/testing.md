@@ -8,5 +8,7 @@ retry exhaustion, sanitized error reports, tenant/queryset scopes, and a replay 
 same confirmation. Also test configured retention with a dry run, source-only deletion,
 full terminal-job deletion, storage failure handling, and protection of nonterminal
 jobs. Test lifecycle callbacks after a real database commit and verify a failing receiver
-does not affect the import outcome. Package CI must validate the OpenAPI schema and both
-wheel and source distribution.
+does not affect the import outcome. For every custom `ResourcePolicy`, test reads,
+exports, preview identity matching, worker commits, rejected rows, and its composition
+with direct scopes. Package CI must validate the OpenAPI schema and both wheel and source
+distribution.

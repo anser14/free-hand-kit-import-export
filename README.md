@@ -6,12 +6,11 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.7.0` implements bounded, queued CSV import,
+> **Status: pre-release.** Version `0.8.0` implements bounded, queued CSV import,
 > configured records, spreadsheet-safe CSV export, direct tenant/owner scopes, permission
 > policies, progress state, sanitized error reports, opt-in terminal-job retention, and
-> transaction-safe lifecycle hooks.
-> It is not published and is not yet a stable production release: application-specific
-> complex authorization policies remain.
+> transaction-safe lifecycle hooks. It is not published and is not yet a stable production
+> release; host-specific authorization can be supplied through a documented policy class.
 
 ## Design promise
 
@@ -110,6 +109,7 @@ are logged and cannot undo a completed import.
 - [Installation](docs/installation.md)
 - [Configuration](docs/configuration.md)
 - [API contract](docs/api-reference.md)
+- [Custom resource policy](docs/configuration.md#custom-resource-policy)
 - [Integration hooks](docs/integration-hooks.md)
 - [Security](docs/security.md)
 
