@@ -576,6 +576,14 @@ def _validate_model_fields(resource: ResourceConfig) -> list[Error]:
 
     if resource.scope is not None:
         scope = resource.scope
+        if scope.model_field in resource.import_fields:
+            issues.append(
+                Error(
+                    f"Resource '{resource.key}' SCOPE MODEL_FIELD '{scope.model_field}' "
+                    "must not be included in IMPORT_FIELDS; it is assigned server-side.",
+                    id="fk_import_export.E024",
+                )
+            )
         if scope.model_field in SENSITIVE_FIELD_NAMES:
             issues.append(
                 Error(

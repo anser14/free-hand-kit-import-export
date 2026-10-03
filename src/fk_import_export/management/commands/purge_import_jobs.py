@@ -7,9 +7,7 @@ from fk_import_export.services import purge_expired_import_data
 
 
 class Command(BaseCommand):
-    help = (
-        "Report or, with --apply, remove expired terminal Freehand Kit import sources and jobs."
-    )
+    help = "Report or, with --apply, remove expired terminal Freehand Kit import sources and jobs."
 
     def add_arguments(self, parser) -> None:  # type: ignore[no-untyped-def]
         parser.add_argument(

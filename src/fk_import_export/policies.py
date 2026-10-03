@@ -37,7 +37,7 @@ class ResourcePolicy:
         return queryset
 
     def prepare_instance(self, *, instance: Model, user: AbstractBaseUser) -> None:
-        """Set or validate a host model instance immediately before an import save."""
+        """Set or validate scalar host state before model validation and save."""
 
 
 class PermissionUser(Protocol):

@@ -30,6 +30,7 @@ pip-wheel-metadata/
 *.sqlite3-journal
 media/
 tests/.test-media/
+examples/production_demo/private-media/
 staticfiles/
 *.log
 

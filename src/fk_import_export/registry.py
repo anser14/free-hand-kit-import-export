@@ -65,14 +65,22 @@ def resource_class(
                 )
             return queryset
 
-        def before_save_instance(self, instance, row, **kwargs):  # type: ignore[no-untyped-def]
+        def import_instance(self, instance, row, **kwargs):  # type: ignore[no-untyped-def]
+            """Apply server-controlled values before model validation runs.
+
+            django-import-export validates a new instance after ``import_instance`` and
+            before ``before_save_instance``. A non-null owner/tenant scope must therefore
+            be assigned here, otherwise a valid scoped import can fail preview validation.
+            """
+
+            super(type(self), self).import_instance(instance, row, **kwargs)
             if scope is not None:
                 setattr(instance, scope.model_field, scope.value)
             if policy is not None and policy_user is not None:
                 policy.prepare_instance(instance=instance, user=policy_user)
 
         attributes["get_queryset"] = get_queryset
-        attributes["before_save_instance"] = before_save_instance
+        attributes["import_instance"] = import_instance
 
     for field_name in selected_fields:
         model_field = model._meta.get_field(field_name)

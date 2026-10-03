@@ -144,6 +144,26 @@ def test_scope_requires_a_real_direct_user_field() -> None:
     assert any(issue.id == "fk_import_export.E022" for issue in issues)
 
 
+def test_scope_field_cannot_be_client_imported() -> None:
+    with override_settings(
+        FREEHAND_KIT_IMPORT_EXPORT={
+            "RESOURCES": {
+                "products": {
+                    "MODEL": "fk_import_export_test_app.Product",
+                    "IMPORT_FIELDS": ("sku", "owner"),
+                    "EXPORT_FIELDS": ("sku",),
+                    "IMPORT_ID_FIELDS": ("sku",),
+                    "RELATIONS": {"owner": {"LOOKUP_FIELD": "username"}},
+                    "SCOPE": {"MODEL_FIELD": "owner", "USER_ATTRIBUTE": "$self"},
+                }
+            }
+        }
+    ):
+        issues = configuration_issues()
+
+    assert any(issue.id == "fk_import_export.E024" for issue in issues)
+
+
 def test_policy_must_import_a_resource_policy_subclass() -> None:
     with override_settings(
         FREEHAND_KIT_IMPORT_EXPORT={

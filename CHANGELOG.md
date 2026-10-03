@@ -3,6 +3,20 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] - 2026-10-03
+
+### Fixed
+
+- Apply server-controlled owner/tenant scopes before model validation, so a scoped
+  resource whose model requires that field can successfully complete preview and import.
+- Exclude local SQLite state and private demonstration upload storage from Docker build
+  contexts.
+
+### Added
+
+- A Dockerized custom-user consumer demo with PostgreSQL, a separate import worker,
+  private storage, relational data, and an end-to-end operator guide.
+
 ## [0.9.0] - 2026-10-03
 
 ### Added

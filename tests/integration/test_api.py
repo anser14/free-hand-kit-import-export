@@ -283,30 +283,45 @@ def test_direct_owner_scope_applies_to_records_exports_and_imports() -> None:
         }
     }
 
-    with override_settings(FREEHAND_KIT_IMPORT_EXPORT=scoped_settings):
-        records_response = client.get("/resources/products/records/?ordering=sku")
-        export_response = client.get("/resources/products/export/?ordering=sku")
-        preview_response = client.post(
-            "/resources/products/imports/preview/",
-            {
-                "file": _csv_upload(
-                    b"sku,name,price,category\nOWNED-NEW,Scoped Mouse,30.00,hardware\n"
-                )
-            },
-            format="multipart",
-        )
+    # The test model normally permits a null owner. Make it required here so preview
+    # proves the package assigns the server-controlled scope before model validation.
+    owner_field = Product._meta.get_field("owner")
+    original_null, original_blank = owner_field.null, owner_field.blank
+    owner_field.null = False
+    owner_field.blank = False
+    try:
+        with override_settings(FREEHAND_KIT_IMPORT_EXPORT=scoped_settings):
+            records_response = client.get("/resources/products/records/?ordering=sku")
+            export_response = client.get("/resources/products/export/?ordering=sku")
+            preview_response = client.post(
+                "/resources/products/imports/preview/",
+                {
+                    "file": _csv_upload(
+                        b"sku,name,price,category\nOWNED-NEW,Scoped Mouse,30.00,hardware\n"
+                    )
+                },
+                format="multipart",
+            )
 
-        assert records_response.status_code == 200
-        assert records_response.json()["results"] == [
-            {"sku": "OWNED-001", "name": "Owned keyboard", "price": "10.00", "category": "hardware"}
-        ]
-        assert b"OTHER-001" not in export_response.content
-        assert preview_response.status_code == 201
-        assert preview_response.json()["status"] == ImportJob.Status.PREVIEWED
+            assert records_response.status_code == 200
+            assert records_response.json()["results"] == [
+                {
+                    "sku": "OWNED-001",
+                    "name": "Owned keyboard",
+                    "price": "10.00",
+                    "category": "hardware",
+                }
+            ]
+            assert b"OTHER-001" not in export_response.content
+            assert preview_response.status_code == 201
+            assert preview_response.json()["status"] == ImportJob.Status.PREVIEWED
 
-        job_id = preview_response.json()["id"]
-        assert client.post(f"/import-jobs/{job_id}/confirm/", format="json").status_code == 202
-        call_command("process_import_jobs")
+            job_id = preview_response.json()["id"]
+            assert client.post(f"/import-jobs/{job_id}/confirm/", format="json").status_code == 202
+            call_command("process_import_jobs")
+    finally:
+        owner_field.null = original_null
+        owner_field.blank = original_blank
 
     imported = Product.objects.get(sku="OWNED-NEW")
     assert imported.owner_id == owner.id
@@ -816,12 +831,15 @@ def test_source_retention_keeps_audit_record_when_storage_deletion_fails(
         updated_at=old_timestamp,
     )
 
-    with override_settings(
-        FREEHAND_KIT_IMPORT_EXPORT={
-            **FREEHAND_KIT_IMPORT_EXPORT,
-            "SOURCE_RETENTION_DAYS": 1,
-        }
-    ), patch("django.db.models.fields.files.FieldFile.delete", side_effect=OSError):
+    with (
+        override_settings(
+            FREEHAND_KIT_IMPORT_EXPORT={
+                **FREEHAND_KIT_IMPORT_EXPORT,
+                "SOURCE_RETENTION_DAYS": 1,
+            }
+        ),
+        patch("django.db.models.fields.files.FieldFile.delete", side_effect=OSError),
+    ):
         call_command("purge_import_jobs", "--sources", "--apply")
 
     job.refresh_from_db()

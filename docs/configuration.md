@@ -73,9 +73,10 @@ and all owner-visible job endpoints.
 direct non-many-to-many field on the imported model, while `USER_ATTRIBUTE` is either a
 direct field on the configured user model or `$self`. The package filters records and
 exports by that value, constrains import identity matching to it, and sets the field
-server-side during import. This deliberately does not accept nested paths or arbitrary
-callbacks. Use the custom policy hook below for memberships, indirect tenancy, or other
-domain-specific rules.
+server-side during import before model validation. The scoped model field must not be in
+`IMPORT_FIELDS`; a client can never supply an owner or tenant value. This deliberately
+does not accept nested paths or arbitrary callbacks. Use the custom policy hook below
+for memberships, indirect tenancy, or other domain-specific rules.
 
 ## Custom resource policy
 
@@ -105,9 +106,10 @@ class ProductMembershipPolicy(ResourcePolicy):
 ```
 
 `filter_queryset` is invoked for `READ`, `EXPORT`, and `IMPORT` operations; for an import
-it limits existing-record identity matching. `prepare_instance` runs immediately before
-each imported model instance is saved and can attach or validate domain data. It may raise
-`ValidationError` to reject the row. Return a queryset for the configured model only.
+it limits existing-record identity matching. `prepare_instance` runs after scalar CSV
+fields are imported but before model validation and saving. It can attach or validate
+domain data and may raise `ValidationError` to reject the row. Return a queryset for the
+configured model only.
 The policy is composed after a direct `SCOPE` filter and cannot bypass `PERMISSIONS`,
 resource field allowlists, CSV validation, or the private job-owner boundary. Keep the
 constructor side-effect-free and move slow work out of the request/worker path.

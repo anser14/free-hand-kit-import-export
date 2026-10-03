@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-freehand_demo}
+      POSTGRES_USER: ${POSTGRES_USER:-freehand_demo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  web:
+    build:
+      context: ../..
+      dockerfile: examples/production_demo/Dockerfile
+    env_file: ${FREEHAND_DEMO_ENV_FILE:-.env}
+    environment:
+      POSTGRES_HOST: db
+    command: >-
+      sh -c "python manage.py migrate --noinput &&
+      gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --access-logfile -"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - private_media:/app/private-media
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: examples/production_demo/Dockerfile
+    env_file: ${FREEHAND_DEMO_ENV_FILE:-.env}
+    environment:
+      POSTGRES_HOST: db
+    command: >-
+      sh -c "python manage.py migrate --noinput &&
+      while true; do python manage.py process_import_jobs --max-jobs 25; sleep 5; done"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - private_media:/app/private-media
+
+volumes:
+  postgres_data:
+  private_media:
