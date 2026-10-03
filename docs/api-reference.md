@@ -1,8 +1,9 @@
 # API contract
 
 All paths are relative to the prefix where the host mounts `fk_import_export.urls`.
-All current endpoints require a staff user. Import jobs are additionally scoped to the
-staff user who submitted them; another user receives `404`.
+Each endpoint requires authentication and the configured resource operation permission.
+If `PERMISSIONS` is omitted, the safe compatibility policy is `$staff`. Import jobs are
+additionally scoped to the submitting user; another user receives `404`.
 
 | Method | Path | Status | Purpose |
 | --- | --- | --- | --- |
@@ -38,3 +39,7 @@ returns `400` when matching records exceed `MAX_EXPORT_ROWS`. Unknown parameters
 fields outside the resource's allowlists return `400`. Search/order/filter controls are
 documented in Swagger for each shared endpoint; the final allowed field names come from
 the resource configuration returned by `GET resources/{key}/`.
+
+When `SCOPE` is declared, all records, exports, preview import identity matching, and
+worker commits are constrained to that caller's direct owner/tenant value. A caller cannot
+override the scoped field through CSV because the server supplies it before saving.

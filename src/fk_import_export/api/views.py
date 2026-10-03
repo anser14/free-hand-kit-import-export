@@ -9,7 +9,9 @@ from django.contrib.auth.models import AbstractBaseUser
 from django.http import Http404, HttpResponse
 from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, OpenApiTypes, extend_schema
 from rest_framework import permissions, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -20,6 +22,7 @@ from fk_import_export.conf import (
     get_resources,
     get_runtime_settings,
 )
+from fk_import_export.policies import has_resource_permission
 from fk_import_export.querying import (
     ExportLimitError,
     ResourceQueryError,
@@ -81,12 +84,12 @@ def _resource_payload(resource: ResourceConfig) -> dict[str, object]:
 
 
 class ResourceAccessAPIView(APIView):
-    """Use staff-only access until per-resource policies are implemented."""
+    """Apply resource-local Django permissions after caller authentication."""
 
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAuthenticated]
 
     @staticmethod
-    def get_submitting_user(request) -> AbstractBaseUser:  # type: ignore[no-untyped-def]
+    def get_submitting_user(request: Request) -> AbstractBaseUser:
         user = request.user
         if not isinstance(user, AbstractBaseUser):
             raise Http404("Resource not found.")
@@ -98,6 +101,17 @@ class ResourceAccessAPIView(APIView):
         except ResourceConfigurationError as exc:
             raise Http404("Resource not found.") from exc
 
+    def require_resource_permission(
+        self,
+        request: Request,
+        resource: ResourceConfig,
+        operation: str,
+    ) -> AbstractBaseUser:
+        user = self.get_submitting_user(request)
+        if not has_resource_permission(resource=resource, user=user, operation=operation):
+            raise PermissionDenied("You do not have permission to access this resource operation.")
+        return user
+
 
 @extend_schema(
     tags=["Freehand Kit Import Export"],
@@ -107,7 +121,15 @@ class ResourceListView(ResourceAccessAPIView):
     """List only developer-registered resources; never enumerate installed models."""
 
     def get(self, request):  # type: ignore[no-untyped-def]
-        return Response([_resource_payload(resource) for resource in get_resources().values()])
+        user = self.get_submitting_user(request)
+        resources = [
+            resource
+            for resource in get_resources().values()
+            if has_resource_permission(resource=resource, user=user, operation="READ")
+        ]
+        if not resources:
+            raise PermissionDenied("You do not have permission to discover resources.")
+        return Response([_resource_payload(resource) for resource in resources])
 
 
 @extend_schema(
@@ -122,6 +144,7 @@ class ResourceSchemaView(ResourceAccessAPIView):
 
     def get(self, request, resource_key: str):  # type: ignore[no-untyped-def]
         resource = self.get_resource(resource_key)
+        self.require_resource_permission(request, resource, "READ")
         payload = _resource_payload(resource)
         payload["relationships"] = {
             name: {"lookup_field": relation.lookup_field, "separator": relation.separator}
@@ -143,6 +166,7 @@ class ResourceTemplateView(ResourceAccessAPIView):
 
     def get(self, request, resource_key: str):  # type: ignore[no-untyped-def]
         resource = self.get_resource(resource_key)
+        self.require_resource_permission(request, resource, "READ")
         response = HttpResponse(content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = (
             f'attachment; filename="{resource.key}-import-template.csv"'
@@ -180,10 +204,13 @@ class ResourceRecordsView(ResourceAccessAPIView):
 
     def get(self, request, resource_key: str):  # type: ignore[no-untyped-def]
         try:
+            resource = self.get_resource(resource_key)
+            submitted_by = self.require_resource_permission(request, resource, "READ")
             result = record_page(
-                self.get_resource(resource_key),
+                resource,
                 request.query_params,
                 get_runtime_settings(),
+                submitted_by,
             )
         except ResourceQueryError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -212,8 +239,14 @@ class ResourceExportView(ResourceAccessAPIView):
 
     def get(self, request, resource_key: str):  # type: ignore[no-untyped-def]
         resource = self.get_resource(resource_key)
+        submitted_by = self.require_resource_permission(request, resource, "EXPORT")
         try:
-            export = csv_export(resource, request.query_params, get_runtime_settings())
+            export = csv_export(
+                resource,
+                request.query_params,
+                get_runtime_settings(),
+                submitted_by,
+            )
         except (ExportLimitError, ResourceQueryError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         response = HttpResponse(content_type="text/csv; charset=utf-8")
@@ -240,13 +273,14 @@ class ImportPreviewView(ResourceAccessAPIView):
 
     def post(self, request, resource_key: str):  # type: ignore[no-untyped-def]
         resource = self.get_resource(resource_key)
+        submitted_by = self.require_resource_permission(request, resource, "IMPORT")
         serializer = ImportPreviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
             job = preview_import(
                 resource=resource,
                 upload=serializer.validated_data["file"],
-                submitted_by=self.get_submitting_user(request),
+                submitted_by=submitted_by,
                 limits=get_runtime_settings(),
             )
         except ImportPayloadError as exc:
@@ -259,9 +293,13 @@ class ImportJobAccessAPIView(ResourceAccessAPIView):
 
     def get_job(self, request, job_id: UUID):  # type: ignore[no-untyped-def]
         try:
-            return get_owned_job(job_id=job_id, submitted_by=self.get_submitting_user(request))
+            submitted_by = self.get_submitting_user(request)
+            job = get_owned_job(job_id=job_id, submitted_by=submitted_by)
         except ImportJobNotFound as exc:
             raise Http404("Import job not found.") from exc
+        resource = self.get_resource(job.resource_key)
+        self.require_resource_permission(request, resource, "IMPORT")
+        return job
 
 
 @extend_schema(
@@ -348,6 +386,7 @@ class ImportConfirmView(ImportJobAccessAPIView):
 
     def post(self, request, job_id: UUID):  # type: ignore[no-untyped-def]
         try:
+            self.get_job(request, job_id)
             result = confirm_import(
                 job_id=job_id,
                 submitted_by=self.get_submitting_user(request),

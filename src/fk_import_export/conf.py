@@ -8,6 +8,7 @@ from typing import Any
 
 from django.apps import apps
 from django.conf import settings as django_settings
+from django.contrib.auth import get_user_model
 from django.core.checks import Error
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Field, Model
@@ -47,6 +48,8 @@ ALLOWED_RESOURCE_KEYS = frozenset(
         "ORDERING_FIELDS",
         "FILTER_FIELDS",
         "RELATIONS",
+        "PERMISSIONS",
+        "SCOPE",
     }
 )
 ALLOWED_SETTING_KEYS = frozenset(
@@ -77,6 +80,23 @@ class RelationConfig:
 
 
 @dataclass(frozen=True)
+class PermissionConfig:
+    """All required Django permissions for each resource operation."""
+
+    read: tuple[str, ...]
+    export: tuple[str, ...]
+    import_: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ScopeConfig:
+    """One direct model field scoped to the authenticated user's direct attribute."""
+
+    model_field: str
+    user_attribute: str
+
+
+@dataclass(frozen=True)
 class ImportExportSettings:
     """Validated operational limits for the import/export API and queue worker."""
 
@@ -103,6 +123,8 @@ class ResourceConfig:
     ordering_fields: tuple[str, ...]
     filter_fields: tuple[str, ...]
     relations: dict[str, RelationConfig]
+    permissions: PermissionConfig
+    scope: ScopeConfig | None
 
     def model(self) -> type[Model]:
         """Resolve the host model only after Django's registry is ready."""
@@ -156,6 +178,94 @@ def _relation_config(value: Any, *, key: str) -> dict[str, RelationConfig]:
     return result
 
 
+def _permission_requirements(value: Any, *, key: str, operation: str) -> tuple[str, ...]:
+    raw_permissions = (value,) if isinstance(value, str) else value
+    if not isinstance(raw_permissions, (list, tuple)) or not raw_permissions:
+        raise ResourceConfigurationError(
+            f"Resource '{key}' PERMISSIONS['{operation}'] must be a non-empty string, "
+            "list, or tuple."
+        )
+    requirements: list[str] = []
+    for permission in raw_permissions:
+        if not isinstance(permission, str) or not permission:
+            raise ResourceConfigurationError(
+                f"Resource '{key}' PERMISSIONS['{operation}'] entries must be strings."
+            )
+        if permission != "$staff" and (
+            permission.count(".") != 1
+            or any(not component.isidentifier() for component in permission.split("."))
+        ):
+            raise ResourceConfigurationError(
+                f"Resource '{key}' PERMISSIONS['{operation}'] entries must be Django "
+                "permission codenames or '$staff'."
+            )
+        requirements.append(permission)
+    return tuple(requirements)
+
+
+def _permission_config(value: Any, *, key: str) -> PermissionConfig:
+    if value is None:
+        return PermissionConfig(read=("$staff",), export=("$staff",), import_=("$staff",))
+    if not isinstance(value, Mapping):
+        raise ResourceConfigurationError(f"Resource '{key}' PERMISSIONS must be a mapping.")
+    required = {"READ", "EXPORT", "IMPORT"}
+    unexpected = set(value) - required
+    missing = required - set(value)
+    if unexpected or missing:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing: {', '.join(sorted(missing))}")
+        if unexpected:
+            details.append(f"unexpected: {', '.join(sorted(map(str, unexpected)))}")
+        raise ResourceConfigurationError(
+            f"Resource '{key}' PERMISSIONS must declare READ, EXPORT, and IMPORT "
+            f"({'; '.join(details)})."
+        )
+    return PermissionConfig(
+        read=_permission_requirements(value["READ"], key=key, operation="READ"),
+        export=_permission_requirements(value["EXPORT"], key=key, operation="EXPORT"),
+        import_=_permission_requirements(value["IMPORT"], key=key, operation="IMPORT"),
+    )
+
+
+def _scope_config(value: Any, *, key: str) -> ScopeConfig | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ResourceConfigurationError(f"Resource '{key}' SCOPE must be a mapping.")
+    required = {"MODEL_FIELD", "USER_ATTRIBUTE"}
+    unexpected = set(value) - required
+    missing = required - set(value)
+    if unexpected or missing:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing: {', '.join(sorted(missing))}")
+        if unexpected:
+            details.append(f"unexpected: {', '.join(sorted(map(str, unexpected)))}")
+        raise ResourceConfigurationError(
+            f"Resource '{key}' SCOPE must declare MODEL_FIELD and USER_ATTRIBUTE "
+            f"({'; '.join(details)})."
+        )
+    model_field = value["MODEL_FIELD"]
+    user_attribute = value["USER_ATTRIBUTE"]
+    if not isinstance(model_field, str) or not model_field or "__" in model_field:
+        raise ResourceConfigurationError(
+            f"Resource '{key}' SCOPE MODEL_FIELD must be a direct model field name."
+        )
+    if (
+        not isinstance(user_attribute, str)
+        or not user_attribute
+        or (
+            user_attribute != "$self"
+            and ("__" in user_attribute or not user_attribute.isidentifier())
+        )
+    ):
+        raise ResourceConfigurationError(
+            f"Resource '{key}' SCOPE USER_ATTRIBUTE must be '$self' or a direct user field name."
+        )
+    return ScopeConfig(model_field=model_field, user_attribute=user_attribute)
+
+
 def _resource_config(key: str, raw_resource: Any) -> ResourceConfig:
     if (
         not isinstance(key, str)
@@ -203,6 +313,8 @@ def _resource_config(key: str, raw_resource: Any) -> ResourceConfig:
         )
 
     relations = _relation_config(raw_resource.get("RELATIONS"), key=key)
+    permissions = _permission_config(raw_resource.get("PERMISSIONS"), key=key)
+    scope = _scope_config(raw_resource.get("SCOPE"), key=key)
     declared_fields = set(import_fields) | set(export_fields)
     undeclared_relations = set(relations) - declared_fields
     if undeclared_relations:
@@ -227,6 +339,8 @@ def _resource_config(key: str, raw_resource: Any) -> ResourceConfig:
             raw_resource.get("FILTER_FIELDS", ()), key=key, setting_key="FILTER_FIELDS"
         ),
         relations=relations,
+        permissions=permissions,
+        scope=scope,
     )
 
 
@@ -411,6 +525,61 @@ def _validate_model_fields(resource: ResourceConfig) -> list[Error]:
                     id="fk_import_export.E016",
                 )
             )
+
+    if resource.scope is not None:
+        scope = resource.scope
+        if scope.model_field in SENSITIVE_FIELD_NAMES:
+            issues.append(
+                Error(
+                    f"Resource '{resource.key}' cannot scope by prohibited field "
+                    f"'{scope.model_field}'.",
+                    id="fk_import_export.E020",
+                )
+            )
+        try:
+            scope_field = model._meta.get_field(scope.model_field)
+        except FieldDoesNotExist:
+            issues.append(
+                Error(
+                    f"Resource '{resource.key}' SCOPE references missing model field "
+                    f"'{scope.model_field}' on {resource.model_label}.",
+                    id="fk_import_export.E020",
+                )
+            )
+        else:
+            if (
+                not isinstance(scope_field, Field)
+                or scope_field.auto_created
+                or scope_field.many_to_many
+            ):
+                issues.append(
+                    Error(
+                        f"Resource '{resource.key}' SCOPE MODEL_FIELD '{scope.model_field}' "
+                        "must be a direct, non-many-to-many model field.",
+                        id="fk_import_export.E021",
+                    )
+                )
+        if scope.user_attribute != "$self":
+            user_model = get_user_model()
+            try:
+                user_field = user_model._meta.get_field(scope.user_attribute)
+            except FieldDoesNotExist:
+                issues.append(
+                    Error(
+                        f"Resource '{resource.key}' SCOPE USER_ATTRIBUTE '{scope.user_attribute}' "
+                        "does not exist on the configured user model.",
+                        id="fk_import_export.E022",
+                    )
+                )
+            else:
+                if not isinstance(user_field, Field) or user_field.auto_created:
+                    issues.append(
+                        Error(
+                            f"Resource '{resource.key}' SCOPE USER_ATTRIBUTE "
+                            f"'{scope.user_attribute}' must be a direct user model field.",
+                            id="fk_import_export.E022",
+                        )
+                    )
 
     for field_name in set().union(*field_sets.values()):
         try:

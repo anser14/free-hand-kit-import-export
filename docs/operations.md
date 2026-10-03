@@ -8,6 +8,11 @@ re-reads its storage object, checks the hash and CSV contract again, and atomica
 commits host data with the terminal job state. Repeated confirmation is safe: queued and
 processing jobs remain queued/processing, and committed jobs remain committed.
 
+For a resource with `SCOPE`, the worker resolves that scope again from the submitting
+user. It constrains identity matching to that owner/tenant and sets the scoped field
+server-side before saving. If the submitter has been deleted or no longer has a usable
+scope value, the job fails safely without changing host rows.
+
 Run the bounded worker under your scheduler or process supervisor:
 
 ```bash

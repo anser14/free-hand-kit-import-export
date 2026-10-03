@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
@@ -78,6 +79,45 @@ def test_non_staff_cannot_enumerate_resources() -> None:
     client.force_authenticate(user=user)
 
     assert client.get("/resources/").status_code == 403
+
+
+@pytest.mark.django_db
+def test_declared_django_permissions_allow_non_staff_per_operation() -> None:
+    user = get_user_model().objects.create_user(username="reader", password="not-used")
+    user.user_permissions.add(
+        Permission.objects.get(
+            content_type__app_label="fk_import_export_test_app",
+            codename="view_product",
+        )
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+    permission_settings = {
+        "RESOURCES": {
+            "products": {
+                "MODEL": "fk_import_export_test_app.Product",
+                "EXPORT_FIELDS": ("sku", "name", "price", "category"),
+                "SEARCH_FIELDS": ("sku", "name"),
+                "ORDERING_FIELDS": ("sku",),
+                "FILTER_FIELDS": ("category",),
+                "RELATIONS": {"category": {"LOOKUP_FIELD": "slug"}},
+                "PERMISSIONS": {
+                    "READ": "fk_import_export_test_app.view_product",
+                    "EXPORT": "$staff",
+                    "IMPORT": "$staff",
+                },
+            }
+        }
+    }
+
+    with override_settings(FREEHAND_KIT_IMPORT_EXPORT=permission_settings):
+        assert client.get("/resources/").status_code == 200
+        assert client.get("/resources/products/records/").status_code == 200
+        assert client.get("/resources/products/export/").status_code == 403
+        assert (
+            client.post("/resources/products/imports/preview/", {}, format="multipart").status_code
+            == 403
+        )
 
 
 @pytest.mark.django_db
@@ -188,6 +228,81 @@ def test_records_support_many_to_many_filtering_by_configured_lookup(
     assert response.json()["results"] == [
         {"sku": "S-MATCH", "name": "Mouse", "tags": "wireless|compact"}
     ]
+
+
+@pytest.mark.django_db
+def test_direct_owner_scope_applies_to_records_exports_and_imports() -> None:
+    owner = get_user_model().objects.create_user(
+        username="tenant-owner",
+        password="not-used",
+        is_staff=True,
+    )
+    other_owner = get_user_model().objects.create_user(
+        username="other-tenant-owner",
+        password="not-used",
+        is_staff=True,
+    )
+    client = APIClient()
+    client.force_authenticate(user=owner)
+    category = Category.objects.create(slug="hardware", name="Hardware")
+    Product.objects.create(
+        sku="OWNED-001",
+        name="Owned keyboard",
+        price="10.00",
+        category=category,
+        owner=owner,
+    )
+    Product.objects.create(
+        sku="OTHER-001",
+        name="Other keyboard",
+        price="20.00",
+        category=category,
+        owner=other_owner,
+    )
+    scoped_settings = {
+        "RESOURCES": {
+            "products": {
+                "MODEL": "fk_import_export_test_app.Product",
+                "IMPORT_FIELDS": ("sku", "name", "price", "category"),
+                "EXPORT_FIELDS": ("sku", "name", "price", "category"),
+                "IMPORT_ID_FIELDS": ("sku",),
+                "SEARCH_FIELDS": ("sku", "name"),
+                "ORDERING_FIELDS": ("sku",),
+                "FILTER_FIELDS": ("category",),
+                "RELATIONS": {"category": {"LOOKUP_FIELD": "slug"}},
+                "SCOPE": {"MODEL_FIELD": "owner", "USER_ATTRIBUTE": "$self"},
+            }
+        }
+    }
+
+    with override_settings(FREEHAND_KIT_IMPORT_EXPORT=scoped_settings):
+        records_response = client.get("/resources/products/records/?ordering=sku")
+        export_response = client.get("/resources/products/export/?ordering=sku")
+        preview_response = client.post(
+            "/resources/products/imports/preview/",
+            {
+                "file": _csv_upload(
+                    b"sku,name,price,category\nOWNED-NEW,Scoped Mouse,30.00,hardware\n"
+                )
+            },
+            format="multipart",
+        )
+
+        assert records_response.status_code == 200
+        assert records_response.json()["results"] == [
+            {"sku": "OWNED-001", "name": "Owned keyboard", "price": "10.00", "category": "hardware"}
+        ]
+        assert b"OTHER-001" not in export_response.content
+        assert preview_response.status_code == 201
+        assert preview_response.json()["status"] == ImportJob.Status.PREVIEWED
+
+        job_id = preview_response.json()["id"]
+        assert client.post(f"/import-jobs/{job_id}/confirm/", format="json").status_code == 202
+        call_command("process_import_jobs")
+
+    imported = Product.objects.get(sku="OWNED-NEW")
+    assert imported.owner_id == owner.id
+    assert Product.objects.get(sku="OTHER-001").owner_id == other_owner.id
 
 
 def _csv_upload(content: bytes, name: str = "products.csv") -> SimpleUploadedFile:

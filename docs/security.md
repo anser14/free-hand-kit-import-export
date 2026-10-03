@@ -2,8 +2,8 @@
 
 Import/export is privileged data mutation. This pre-release implementation enforces a
 resource allowlist, direct safe fields, staff access, owner-scoped jobs, upload limits,
-auditing, dry-run preview, source hashing, a durable worker queue, and atomic execution.
-It deliberately
+auditing, dry-run preview, source hashing, a durable worker queue, atomic execution,
+declarative permissions, and optional direct owner/tenant scope. It deliberately
 does not trust a client-supplied model label, field list, or stored preview alone.
 
 The CSV parser accepts UTF-8 only, requires exact configured headers, rejects duplicate
@@ -25,6 +25,8 @@ default; a future raw machine-to-machine policy must remain opt-in and explicit.
 Treat uploaded datasets as sensitive. Do not log their contents or expose another
 user's import job, error report, or original file.
 
-Before a stable release, add tenant/queryset scoping and a configurable per-resource
-permission policy. The current staff-only baseline is intentionally conservative but
-not a substitute for an application's domain authorization rules.
+Before a stable release, validate every application's tenant/queryset and permission
+configuration in its own deployment. The package provides a safe direct scope and Django
+permission-policy baseline, but it cannot infer membership graphs, indirect tenancy, or
+other application-specific domain rules. Keep those policies explicit and test them
+separately.

@@ -9,9 +9,12 @@ from import_export import fields, resources
 from import_export.widgets import ForeignKeyWidget, ManyToManyWidget, Widget
 
 from .conf import ResourceConfig, ResourceConfigurationError
+from .policies import ResolvedScope
 
 
-def resource_class(config: ResourceConfig) -> type[resources.ModelResource[Model]]:
+def resource_class(
+    config: ResourceConfig, *, scope: ResolvedScope | None = None
+) -> type[resources.ModelResource[Model]]:
     """Build a configured ``ModelResource`` without host boilerplate classes.
 
     This private adapter is deliberately the only place that depends on
@@ -33,6 +36,17 @@ def resource_class(config: ResourceConfig) -> type[resources.ModelResource[Model
         },
     )
     attributes: dict[str, object] = {"Meta": meta}
+
+    if scope is not None:
+
+        def get_queryset(self):  # type: ignore[no-untyped-def]
+            return super(type(self), self).get_queryset().filter(**{scope.model_field: scope.value})
+
+        def before_save_instance(self, instance, row, **kwargs):  # type: ignore[no-untyped-def]
+            setattr(instance, scope.model_field, scope.value)
+
+        attributes["get_queryset"] = get_queryset
+        attributes["before_save_instance"] = before_save_instance
 
     for field_name in selected_fields:
         model_field = model._meta.get_field(field_name)

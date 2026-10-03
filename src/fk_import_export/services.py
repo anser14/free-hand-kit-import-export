@@ -20,6 +20,7 @@ from tablib import Dataset  # type: ignore[import-untyped]
 
 from .conf import ImportExportSettings, ResourceConfig, ResourceConfigurationError, get_resource
 from .models import ImportJob
+from .policies import resolve_scope
 from .registry import resource_class
 
 
@@ -237,9 +238,11 @@ def _run_import(
     limits: ImportExportSettings,
     *,
     dry_run: bool,
+    submitted_by: AbstractBaseUser,
 ) -> ImportReport:
     try:
-        result = resource_class(resource)().import_data(
+        scope = resolve_scope(scope=resource.scope, user=submitted_by)
+        result = resource_class(resource, scope=scope)().import_data(
             parsed.dataset,
             dry_run=dry_run,
             raise_errors=False,
@@ -323,7 +326,13 @@ def preview_import(
     job.source_file.save(source.name, ContentFile(source.content), save=False)
     job.save()
 
-    report = _run_import(resource, parsed, limits, dry_run=True)
+    report = _run_import(
+        resource,
+        parsed,
+        limits,
+        dry_run=True,
+        submitted_by=submitted_by,
+    )
     status = ImportJob.Status.PREVIEWED if report.can_confirm else ImportJob.Status.FAILED
     return _update_lifecycle(job, report, status=status)
 
@@ -431,7 +440,22 @@ def _process_claimed_import_job(*, job_id: UUID, limits: ImportExportSettings) -
         if job.progress_total != parsed.row_count:
             job.progress_total = parsed.row_count
             job.save(update_fields=("progress_total", "updated_at"))
-        report = _run_import(resource, parsed, limits, dry_run=False)
+        submitted_by = job.submitted_by
+        if not isinstance(submitted_by, AbstractBaseUser):
+            return _update_lifecycle(
+                job,
+                _processing_failure(row_count=parsed.row_count),
+                status=ImportJob.Status.FAILED,
+                progress_total=parsed.row_count,
+                progress_completed=0,
+            )
+        report = _run_import(
+            resource,
+            parsed,
+            limits,
+            dry_run=False,
+            submitted_by=submitted_by,
+        )
         if not report.can_confirm:
             return _update_lifecycle(
                 job,

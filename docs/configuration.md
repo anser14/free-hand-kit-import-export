@@ -24,6 +24,12 @@ FREEHAND_KIT_IMPORT_EXPORT = {
             "RELATIONS": {
                 "category": {"LOOKUP_FIELD": "slug", "SEPARATOR": "|"},
             },
+            "PERMISSIONS": {
+                "READ": "inventory.view_product",
+                "EXPORT": "inventory.view_product",
+                "IMPORT": "inventory.change_product",
+            },
+            "SCOPE": {"MODEL_FIELD": "owner", "USER_ATTRIBUTE": "$self"},
         },
     },
 }
@@ -45,6 +51,21 @@ into the import engine. Relation names must be declared in import or export fiel
 `processing` job stale. `MAX_ATTEMPTS` caps recovery retries; a stale job at the cap is
 marked failed with a sanitized processing error. Set both values from realistic worker
 timeouts and the maximum execution time of your largest permitted upload.
+
+`PERMISSIONS` declares all requirements for `READ`, `EXPORT`, and `IMPORT`. A value can
+be a Django permission codename (`"app_label.codename"`) or a list/tuple of codenames
+that must all be held. `$staff` is the safe compatibility default when `PERMISSIONS` is
+omitted; production projects should declare explicit codenames. Read controls discovery,
+schema, templates, and JSON records; export controls CSV export; import controls preview
+and all owner-visible job endpoints.
+
+`SCOPE` is optional for the common direct owner/tenant case. `MODEL_FIELD` identifies one
+direct non-many-to-many field on the imported model, while `USER_ATTRIBUTE` is either a
+direct field on the configured user model or `$self`. The package filters records and
+exports by that value, constrains import identity matching to it, and sets the field
+server-side during import. This deliberately does not accept nested paths or arbitrary
+callbacks. Use a future custom policy hook for memberships, indirect tenancy, or other
+domain-specific rules.
 
 `records/` supports `search`, `ordering`, `page`, `page_size`, and exact
 `filter.<field>` parameters only when their fields are explicitly present in

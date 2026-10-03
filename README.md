@@ -6,10 +6,11 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.4.0` implements bounded, queued CSV import,
-> configured records, spreadsheet-safe CSV export, progress state, and sanitized error
-> reports. It is not published and is not yet a stable production release: queryset/
-> tenant scoping, configurable per-resource permissions, and retention operations remain.
+> **Status: pre-release.** Version `0.5.0` implements bounded, queued CSV import,
+> configured records, spreadsheet-safe CSV export, direct tenant/owner scopes, permission
+> policies, progress state, and sanitized error reports. It is not published and is not
+> yet a stable production release: retention operations and application-specific complex
+> authorization policies remain.
 
 ## Design promise
 
@@ -37,6 +38,12 @@ FREEHAND_KIT_IMPORT_EXPORT = {
             "RELATIONS": {
                 "category": {"LOOKUP_FIELD": "slug"},
             },
+            "PERMISSIONS": {
+                "READ": "inventory.view_product",
+                "EXPORT": "inventory.view_product",
+                "IMPORT": "inventory.change_product",
+            },
+            "SCOPE": {"MODEL_FIELD": "owner", "USER_ATTRIBUTE": "$self"},
         },
     },
 }
@@ -65,8 +72,8 @@ The worker revalidates the stored source and atomically applies the import. Poll
 `GET /api/data/import-jobs/{id}/` for queue state and progress, or download its
 sanitized failure metadata from `GET /api/data/import-jobs/{id}/errors/`.
 
-Staff users can also use `GET /api/data/resources/products/records/` for paginated JSON
-and `GET /api/data/resources/products/export/` for bounded CSV. Both accept only
+Authorized users can also use `GET /api/data/resources/products/records/` for paginated
+JSON and `GET /api/data/resources/products/export/` for bounded CSV. Both accept only
 developer-configured `search`, `ordering`, and `filter.<field>` controls. CSV export
 cells that could be interpreted as spreadsheet formulae are prefixed safely.
 
@@ -81,8 +88,8 @@ cells that could be interpreted as spreadsheet formulae are prefixed safely.
   blank rows. Persisted errors contain line numbers and codes—not uploaded cell values.
 - Preview and worker execution use transactions; queue confirmation is retry-safe and
   worker retries are bounded.
-- CSV exports are capped and spreadsheet-formula-safe. Queryset scoping and configurable
-  authorization are still mandatory before the first stable release.
+- CSV exports are capped and spreadsheet-formula-safe. Scope and permission policies are
+  declared in settings; model-specific complex authorization may still need a future hook.
 
 ## Documentation
 

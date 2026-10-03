@@ -3,6 +3,19 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-10-03
+
+### Added
+
+- Per-resource Django permission policies for read, export, and import operations.
+- Direct owner/tenant scope configuration applied to records, exports, import matching,
+  and worker commits.
+
+### Security
+
+- Resource discovery now returns only resources whose declared read policy permits the
+  caller. Scoped imports attach the declared owner/tenant value server-side.
+
 ## [0.4.0] - 2026-10-02
 
 ### Added
