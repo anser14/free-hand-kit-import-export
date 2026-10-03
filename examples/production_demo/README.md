@@ -27,9 +27,11 @@ In PowerShell, use this copy command instead:
 Copy-Item examples/production_demo/.env.example examples/production_demo/.env
 ```
 
-The `web` service runs migrations before Gunicorn starts. The `worker` service polls the
-database-backed job queue every five seconds. Both services share a private Docker volume
-for uploaded CSV sources; no media URL is configured or exposed.
+The one-shot `migrate` service applies database migrations exactly once. Docker Compose
+starts `web` and `worker` only after that succeeds, avoiding a migration race at startup.
+The `worker` service polls the database-backed job queue every five seconds. Web and
+worker share a private Docker volume for uploaded CSV sources; no media URL is configured
+or exposed.
 
 Create an initial administrator in another terminal:
 
@@ -81,6 +83,8 @@ docker compose --env-file examples/production_demo/.env \
   -f examples/production_demo/compose.yaml ps
 docker compose --env-file examples/production_demo/.env \
   -f examples/production_demo/compose.yaml logs --follow worker
+docker compose --env-file examples/production_demo/.env \
+  -f examples/production_demo/compose.yaml logs migrate
 ```
 
 The demo retains source CSV files for seven days and terminal job audit records for

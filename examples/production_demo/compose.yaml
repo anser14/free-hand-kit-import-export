@@ -13,6 +13,18 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  migrate:
+    build:
+      context: ../..
+      dockerfile: examples/production_demo/Dockerfile
+    env_file: ${FREEHAND_DEMO_ENV_FILE:-.env}
+    environment:
+      POSTGRES_HOST: db
+    command: python manage.py migrate --noinput
+    depends_on:
+      db:
+        condition: service_healthy
+
   web:
     build:
       context: ../..
@@ -20,12 +32,10 @@ services:
     env_file: ${FREEHAND_DEMO_ENV_FILE:-.env}
     environment:
       POSTGRES_HOST: db
-    command: >-
-      sh -c "python manage.py migrate --noinput &&
-      gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --access-logfile -"
+    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --access-logfile -
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "8000:8000"
     volumes:
@@ -39,11 +49,10 @@ services:
     environment:
       POSTGRES_HOST: db
     command: >-
-      sh -c "python manage.py migrate --noinput &&
-      while true; do python manage.py process_import_jobs --max-jobs 25; sleep 5; done"
+      sh -c "while true; do python manage.py process_import_jobs --max-jobs 25; sleep 5; done"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - private_media:/app/private-media
 

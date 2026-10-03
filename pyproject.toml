@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "freehand-kit-import-export"
-version = "0.9.1"
+version = "0.9.2"
 description = "Declarative, CSV-first Django REST Framework import and export APIs."
 readme = "README.md"
 requires-python = ">=3.11"

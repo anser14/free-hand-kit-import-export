@@ -6,7 +6,7 @@ settings dictionary, mounts one URL, and receives documented discovery, schema,
 CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
 its data engine.
 
-> **Status: pre-release.** Version `0.9.1` implements bounded, queued CSV import,
+> **Status: pre-release.** Version `0.9.2` implements bounded, queued CSV import,
 > configured records, spreadsheet-safe CSV export, direct tenant/owner scopes, permission
 > policies, progress state, sanitized error reports, opt-in terminal-job retention, and
 > transaction-safe lifecycle hooks. It is not published and is not yet a stable production

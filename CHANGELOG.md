@@ -3,6 +3,14 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.9.2] - 2026-10-03
+
+### Changed
+
+- The Docker consumer demo runs migrations in one short-lived service. Web and worker
+  now wait for that migration to complete successfully, preventing concurrent startup
+  migration attempts.
+
 ## [0.9.1] - 2026-10-03
 
 ### Fixed
