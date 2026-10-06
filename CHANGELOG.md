@@ -3,6 +3,17 @@
 All notable changes to this package are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] - 2026-10-06
+
+### Changed
+
+- Promoted the tested CSV-first import/export API, durable worker workflow, documented
+  OpenAPI routes, and production consumer demo to the first stable release.
+- Declared the package as `Production/Stable` in its distribution metadata. The supported
+  compatibility range remains Python 3.11–3.13 and Django 5.2–6.0.
+- Reworked public documentation around an end-to-end quickstart, explicit CSV-only support,
+  practical installation steps, and a clearer API workflow.
+
 ## [0.10.0] - 2026-10-03
 
 ### Added
