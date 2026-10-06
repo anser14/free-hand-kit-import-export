@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "freehand-kit-import-export"
-version = "0.10.0"
+version = "1.0.0"
 description = "Declarative, CSV-first Django REST Framework import and export APIs."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,7 +15,7 @@ authors = [
 ]
 keywords = ["django", "django-rest-framework", "csv", "import", "export", "openapi"]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 5 - Production/Stable",
   "Framework :: Django",
   "Framework :: Django :: 5.2",
   "Intended Audience :: Developers",
@@ -36,7 +36,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-xlsx = ["django-import-export[xlsx]>=4.4,<5"]
 dev = [
   "build>=1.2",
   "coverage[toml]>=7.6",

@@ -1,6 +1,6 @@
 # Security
 
-Import/export is privileged data mutation. This pre-release implementation enforces a
+Import/export is privileged data mutation. This stable implementation enforces a
 resource allowlist, direct safe fields, staff access, owner-scoped jobs, upload limits,
 auditing, dry-run preview, source hashing, a durable worker queue, atomic execution,
 declarative permissions, and optional direct owner/tenant scope. It deliberately

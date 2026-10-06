@@ -1,3 +1,3 @@
 """Freehand Kit's declarative Django import/export package."""
 
-__version__ = "0.10.0"
+__version__ = "1.0.0"

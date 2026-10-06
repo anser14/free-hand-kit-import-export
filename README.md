@@ -1,55 +1,98 @@
-# Freehand Kit Import Export
+# Freehand Kit Import Export: Django REST Framework CSV Import/Export API
 
-`freehand-kit-import-export` is a declarative, CSV-first import/export package for
-Django REST Framework. A host developer registers approved model resources in one
-settings dictionary, mounts one URL, and receives documented discovery, schema,
-CSV-template, preview, and confirm APIs. The package uses `django-import-export` as
-its data engine.
+`freehand-kit-import-export` gives Django and Django REST Framework projects a secure,
+configuration-first API for importing and exporting model data as CSV. Register an
+approved model once in Django settings; the package provides discoverable endpoints,
+Swagger/OpenAPI documentation, CSV templates, dry-run validation, a durable import queue,
+and bounded exports.
 
-> **Status: pre-release.** Version `0.10.0` implements bounded, queued CSV import,
-> configured records, spreadsheet-safe CSV export, direct tenant/owner scopes, permission
-> policies, progress state, sanitized error reports, opt-in terminal-job retention, and
-> transaction-safe lifecycle hooks. It is not published and is not yet a stable production
-> release; host-specific authorization can be supplied through a documented policy class.
+> **Status: stable.** Version `1.0.0` is the first stable release. It supports Python
+> 3.11–3.13, Django 5.2–6.0, and Django REST Framework 3.17.x.
 
-## Design promise
+## Why use this Django import/export package?
 
-Host developers should not need to write a `ModelResource`, CSV parser, serializer,
-view, pagination class, search backend, ordering backend, or Swagger annotation for
-every model. They configure an approved resource; the package owns the reusable API
-workflow.
+Most Django projects need CSV import and export sooner or later: product catalog uploads,
+member updates, back-office data fixes, onboarding data, or customer reports. Rebuilding
+serializers, CSV parsing, validation, permission checks, pagination, and API documentation
+for every model is repetitive and easy to get wrong.
 
-API callers never submit arbitrary Django model labels or field names. They select a
-developer-approved resource key such as `products`.
+Freehand Kit Import Export lets the host application keep control of its models and access
+rules while the package owns the reusable workflow. API callers can use only resources and
+fields that the host developer explicitly approves; they cannot submit arbitrary model names
+or field lists.
 
-## Quick start
+| You configure | The package provides |
+| --- | --- |
+| Django model, permitted fields, identifiers, relations, permissions, and optional owner/tenant scope | Resource discovery, CSV template, preview, confirmation, job history, records, and export APIs |
+| Authentication in your project | Permission checks on every endpoint; the package never creates an authentication system |
+| A worker or scheduler | Durable, retry-bounded import processing after an explicit confirmation |
+| Private storage and retention policy | Source hashes, sanitized error reports, and safe cleanup commands |
+
+## Supported workflow
+
+1. A developer registers a model as a named resource, for example `products`.
+2. An authorized user downloads the exact CSV template or creates a matching UTF-8 CSV.
+3. The user uploads it to the **preview** endpoint. No model rows are written yet.
+4. The API returns a job with validation results. The user confirms only a successful preview.
+5. A background worker revalidates the saved file and atomically writes the model rows.
+6. The user polls the job, downloads sanitized errors when needed, lists records, or exports CSV.
+
+Imports are CSV-only in `1.0.0`. XLSX, JSON, and arbitrary model/field submission are not
+supported by this package version.
+
+## Install and run your first import
+
+```bash
+python -m pip install freehand-kit-import-export
+```
+
+1. Add `rest_framework`, `drf_spectacular`, and `fk_import_export` to `INSTALLED_APPS`.
+2. Register a resource in `FREEHAND_KIT_IMPORT_EXPORT`.
+3. Mount `/api/data/` and the shared Swagger route at `/api/docs/`.
+4. Run `python manage.py migrate` and `python manage.py check --tag fk_import_export`.
+5. Run `python manage.py process_import_jobs --max-jobs 10` under a worker or scheduler.
+
+The complete copy-and-paste tutorial—including settings, URLs, CSV upload, preview,
+confirmation, worker processing, records, exports, errors, and production checklist—is in
+[the quickstart guide](docs/quickstart.md).
+
+## Minimal Django configuration
 
 ```python
+# settings.py
+INSTALLED_APPS = [
+    # Your Django apps...
+    "rest_framework",
+    "drf_spectacular",
+    "fk_import_export",
+]
+
+REST_FRAMEWORK = {
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
 FREEHAND_KIT_IMPORT_EXPORT = {
     "RESOURCES": {
         "products": {
             "MODEL": "inventory.Product",
-            "IMPORT_FIELDS": ("sku", "name", "price", "category"),
-            "EXPORT_FIELDS": ("sku", "name", "price", "category"),
+            "IMPORT_FIELDS": ("sku", "name", "price"),
+            "EXPORT_FIELDS": ("sku", "name", "price"),
             "IMPORT_ID_FIELDS": ("sku",),
             "SEARCH_FIELDS": ("sku", "name"),
             "ORDERING_FIELDS": ("sku", "name", "price"),
-            "FILTER_FIELDS": ("category",),
-            "RELATIONS": {
-                "category": {"LOOKUP_FIELD": "slug"},
-            },
+            "FILTER_FIELDS": (),
             "PERMISSIONS": {
                 "READ": "inventory.view_product",
                 "EXPORT": "inventory.view_product",
                 "IMPORT": "inventory.change_product",
             },
-            "SCOPE": {"MODEL_FIELD": "owner", "USER_ATTRIBUTE": "$self"},
         },
     },
 }
 ```
 
 ```python
+# urls.py
 from django.urls import include, path
 
 urlpatterns = [
@@ -58,67 +101,58 @@ urlpatterns = [
 ]
 ```
 
-Run `python manage.py migrate`, then visit `/api/docs/`. Staff users can download
-the template, submit `POST /api/data/resources/products/imports/preview/` as multipart
-form data with a `file` field, review the returned job, and explicitly call
-`POST /api/data/import-jobs/{id}/confirm/`. A preview is dry-run only; confirmation
-returns `202 Accepted` after adding the job to the durable database queue. Run a worker
-under your process supervisor or scheduler:
+Visit `/api/docs/` after starting the Django project. If your project already exposes a
+central drf-spectacular schema—such as one mounted by `fk_auth`—do **not** mount
+`fk_import_export.docs_urls` again. The existing `/api/docs/` automatically includes these
+endpoints.
 
-```bash
-python manage.py process_import_jobs --max-jobs 10
-```
+## Core features
 
-Configure a retention period for private CSV source files and completed audit jobs, then
-review a dry run before enabling deletion:
+- **Plug-and-play Django REST Framework endpoints** for approved Django models.
+- **CSV import preview and confirmation** so invalid data is never written accidentally.
+- **Durable worker queue** with retries, stale-job recovery, atomic commits, and job history.
+- **Secure relation handling** with explicit unique lookups; related rows are never silently created.
+- **Per-resource Django permissions** and direct owner/tenant scopes.
+- **Paginated records API** with allowlisted search, ordering, and filters.
+- **Bounded CSV exports** with spreadsheet formula-injection protection.
+- **Automatic Swagger/OpenAPI documentation** at `/api/docs/` and `/api/schema/`.
+- **Sanitized error reports, lifecycle signals, and retention tools** for operating imports safely.
 
-```bash
-python manage.py purge_import_jobs
-python manage.py purge_import_jobs --apply
-```
+## Common use cases
 
-The worker revalidates the stored source and atomically applies the import. Poll
-`GET /api/data/import-jobs/{id}/` for queue state and progress, or download its
-sanitized failure metadata from `GET /api/data/import-jobs/{id}/errors/`.
-Use `GET /api/data/import-jobs/` for the caller's paginated, permission-filtered history.
+- Django admin or operations teams importing product, inventory, pricing, customer, or membership CSV files.
+- React, Vue, mobile, and partner clients using a documented Django REST Framework import API.
+- SaaS applications that must isolate data by owner or tenant during import and export.
+- Back-office systems that need searchable JSON records alongside downloadable CSV reports.
 
-Authorized users can also use `GET /api/data/resources/products/records/` for paginated
-JSON and `GET /api/data/resources/products/export/` for bounded CSV. Both accept only
-developer-configured `search`, `ordering`, and `filter.<field>` controls. CSV export
-cells that could be interpreted as spreadsheet formulae are prefixed safely.
+## Security model
 
-Host apps can subscribe to post-commit import lifecycle signals for notifications or
-auditing; see [integration hooks](docs/integration-hooks.md). Signal receiver failures
-are logged and cannot undo a completed import.
+The package is intentionally restrictive:
 
-If another Freehand Kit package, such as `fk_auth`, already owns `/api/schema/` and
-`/api/docs/`, do not mount `fk_import_export.docs_urls` again. Its shared schema will
-automatically include the import/export endpoints mounted at `/api/data/`.
+- Only registered resources and explicit fields are exposed.
+- Sensitive fields—passwords, staff flags, groups, permissions, and tokens—are denied by default.
+- Uploads must be UTF-8 `.csv` files with exact headers and configured byte/row limits.
+- Preview and worker execution are transactional; confirming a job is safe to retry.
+- Stored errors contain line numbers and categories, never uploaded cell values or raw database exceptions.
+- CSV exports are capped and guarded against spreadsheet formula injection.
 
-## Safety boundary
-
-- Only explicitly registered resources are discoverable.
-- Sensitive fields such as passwords, staff flags, groups, permissions, and tokens are
-  denied by default.
-- Import identifiers and relationship lookups must be explicit.
-- Related objects are never auto-created by default.
-- Uploads are UTF-8 CSV only, with exact configured headers, size/row limits, and no
-  blank rows. Persisted errors contain line numbers and codes—not uploaded cell values.
-- Preview and worker execution use transactions; queue confirmation is retry-safe and
-  worker retries are bounded.
-- CSV exports are capped and spreadsheet-formula-safe. Scope and permission policies are
-  declared in settings; model-specific complex authorization may still need a future hook.
+You must still configure your application's authentication, private media storage,
+permissions, tenant rules, backups, and monitoring. Read the [security guide](docs/security.md)
+before accepting real customer data.
 
 ## Documentation
 
+- **Start here:** [end-to-end quickstart](docs/quickstart.md)
+- [Installation and URL setup](docs/installation.md)
+- [Resource configuration reference](docs/configuration.md)
+- [API endpoint reference](docs/api-reference.md)
+- [Worker, retries, and retention operations](docs/operations.md)
+- [Custom authorization policies](docs/configuration.md#custom-resource-policy)
+- [Lifecycle integration hooks](docs/integration-hooks.md)
+- [Production-style Docker demo with a custom user model](examples/production_demo/README.md)
+- [Security guidance](docs/security.md)
+- [Compatibility and supported versions](docs/compatibility.md)
 - [Architecture decision](docs/architecture/ADR-0001-engine-and-safety-boundary.md)
-- [Installation](docs/installation.md)
-- [Configuration](docs/configuration.md)
-- [API contract](docs/api-reference.md)
-- [Dockerized custom-user consumer demo](examples/production_demo/README.md)
-- [Custom resource policy](docs/configuration.md#custom-resource-policy)
-- [Integration hooks](docs/integration-hooks.md)
-- [Security](docs/security.md)
 
 ## License
 

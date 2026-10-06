@@ -1,5 +1,9 @@
 # API contract
 
+For a first working import, follow the [end-to-end quickstart](quickstart.md). This page
+is the complete endpoint reference once the resource, URLs, migrations, authentication,
+and worker are in place.
+
 All resource paths below are relative to the prefix where the host mounts
 `fk_import_export.urls`, commonly `/api/data/`. Each endpoint requires authentication and
 the configured resource operation permission. If `PERMISSIONS` is omitted, the safe
@@ -55,3 +59,17 @@ the resource configuration returned by `GET resources/{key}/`.
 When `SCOPE` is declared, all records, exports, preview import identity matching, and
 worker commits are constrained to that caller's direct owner/tenant value. A caller cannot
 override the scoped field through CSV because the server supplies it before saving.
+
+## Typical API sequence
+
+1. `GET resources/` to discover resources the current user can read.
+2. `GET resources/{key}/template/` to obtain the exact CSV header row.
+3. `POST resources/{key}/imports/preview/` with one multipart `file` field.
+4. Inspect the returned job. A `previewed` job has `confirmation_eligible: true`; a
+   `failed` preview has sanitized row errors and must not be confirmed.
+5. `POST import-jobs/{id}/confirm/` for a successful preview. It returns `202` while
+   work is queued or running.
+6. Run `process_import_jobs` and poll `GET import-jobs/{id}/` until the status becomes
+   `committed` or `failed`.
+7. Use `GET resources/{key}/records/` for paginated JSON and
+   `GET resources/{key}/export/` for a bounded CSV export.
